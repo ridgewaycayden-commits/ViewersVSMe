@@ -4,13 +4,23 @@
     "$className": "DataModel",
     "ServerScriptService": {
       "$className": "ServerScriptService",
-      "$path": "src/ServerScriptService"
+      "TikTokGameCore": {
+        "$path": "src/ServerScriptService/TikTokGameCore.server.lua"
+      },
+      "CityOverhaul": {
+        "$path": "src/ServerScriptService/CityOverhaul.server.lua"
+      },
+      "BrighterMap": {
+        "$path": "src/ServerScriptService/BrighterMap.server.lua"
+      }
     },
     "StarterPlayer": {
       "$className": "StarterPlayer",
       "StarterPlayerScripts": {
         "$className": "StarterPlayerScripts",
-        "$path": "src/StarterPlayer/StarterPlayerScripts"
+        "TestButton": {
+          "$path": "src/StarterPlayer/StarterPlayerScripts/TestButton.client.lua"
+        }
       }
     }
   }
