@@ -1,5 +1,5 @@
 -- AutoCombat.client.lua
--- VIEWERS VS ME - PLAYER AI V2.4
+-- VIEWERS VS ME - PLAYER AI V2.5
 -- Autonomous FPS combat + obstacle avoidance + timed TikTok gift weapons + REAL line of sight.
 
 local Players=game:GetService("Players")
@@ -43,6 +43,9 @@ local aimPoint=nil
 local viewModel=nil
 local weaponRoot=nil
 local muzzlePart=nil
+local idleMove=Vector3.zero
+local idlePauseUntil=0
+local nextIdlePause=os.clock()+rng:NextNumber(5,9)
 
 local rayParams=RaycastParams.new();rayParams.FilterType=Enum.RaycastFilterType.Exclude;rayParams.IgnoreWater=true
 local losParams=RaycastParams.new();losParams.FilterType=Enum.RaycastFilterType.Exclude;losParams.IgnoreWater=true
@@ -168,13 +171,13 @@ local function computePath(root,goal)
 	if ok and path.Status==Enum.PathStatus.Success then pathWaypoints=path:GetWaypoints();pathIndex=2 else pathWaypoints=nil;pathIndex=1 end
 end
 local function pathDirection(root,goal)
-	if os.clock()>nextPathRefresh then nextPathRefresh=os.clock()+.62;computePath(root,goal) end
-	if pathWaypoints and pathWaypoints[pathIndex] then local wp=pathWaypoints[pathIndex];if (root.Position-wp.Position).Magnitude<3 then pathIndex+=1;wp=pathWaypoints[pathIndex] end;if wp then local _,hum=getCharacter();if hum and wp.Action==Enum.PathWaypointAction.Jump then hum.Jump=true end;return wp.Position-root.Position end end
+	if os.clock()>nextPathRefresh then nextPathRefresh=os.clock()+.75;computePath(root,goal) end
+	if pathWaypoints and pathWaypoints[pathIndex] then local wp=pathWaypoints[pathIndex];if (root.Position-wp.Position).Magnitude<4 then pathIndex+=1;wp=pathWaypoints[pathIndex] end;if wp then local _,hum=getCharacter();if hum and wp.Action==Enum.PathWaypointAction.Jump then hum.Jump=true end;return wp.Position-root.Position end end
 	return goal-root.Position
 end
 local function chooseRoamGoal(root)
-	for _=1,12 do local a=rng:NextNumber(0,math.pi*2);local d=rng:NextNumber(18,42);local p=root.Position+Vector3.new(math.cos(a)*d,0,math.sin(a)*d);if floorExists(p) and not obstacleAhead(root,p-root.Position,6) then roamGoal=p;roamExpire=os.clock()+rng:NextNumber(3.5,6.5);nextPathRefresh=0;return end end
-	roamGoal=root.Position+Vector3.new(rng:NextNumber(-12,12),0,rng:NextNumber(-12,12));roamExpire=os.clock()+3
+	for _=1,12 do local a=rng:NextNumber(0,math.pi*2);local d=rng:NextNumber(32,58);local p=root.Position+Vector3.new(math.cos(a)*d,0,math.sin(a)*d);if floorExists(p) and not obstacleAhead(root,p-root.Position,6) then roamGoal=p;roamExpire=os.clock()+rng:NextNumber(7,12);nextPathRefresh=0;return end end
+	roamGoal=root.Position+Vector3.new(rng:NextNumber(-20,20),0,rng:NextNumber(-20,20));roamExpire=os.clock()+6
 end
 
 local function shoot(target)
@@ -193,8 +196,10 @@ RunService.RenderStepped:Connect(function(dt)
 	local char,hum,root,head=getCharacter();if not char then return end
 	hideLocalCharacter(char)
 	local target,dist,visible=nearestEnemy(root);currentTarget=target;local desiredMove=Vector3.zero
+	local idleMode=not (target and aliveEnemy(target))
 
-	if target and aliveEnemy(target) then
+	if not idleMode then
+		idleMove=Vector3.zero
 		local er=target:FindFirstChild("HumanoidRootPart")
 		if er then
 			local flatTo=Vector3.new(er.Position.X-root.Position.X,0,er.Position.Z-root.Position.Z)
@@ -215,8 +220,26 @@ RunService.RenderStepped:Connect(function(dt)
 		end
 	else
 		currentWeapon=giftGun();aimPoint=nil
-		if not roamGoal or os.clock()>roamExpire or (root.Position-roamGoal).Magnitude<4 then chooseRoamGoal(root) end
-		desiredMove=steerAround(root,pathDirection(root,roamGoal));hum.WalkSpeed=18;hum:Move(desiredMove,false)
+		if not roamGoal or os.clock()>roamExpire or (root.Position-roamGoal).Magnitude<5 then
+			chooseRoamGoal(root)
+			idlePauseUntil=os.clock()+rng:NextNumber(.25,.75)
+		end
+		if os.clock()>nextIdlePause then
+			idlePauseUntil=os.clock()+rng:NextNumber(.4,1.0)
+			nextIdlePause=os.clock()+rng:NextNumber(6,11)
+		end
+		local rawMove=steerAround(root,pathDirection(root,roamGoal))
+		local targetMove=(rawMove.Magnitude>.05 and rawMove.Unit or Vector3.zero)
+		idleMove=idleMove:Lerp(targetMove,math.clamp(dt*1.7,0,1))
+		if os.clock()<idlePauseUntil then
+			desiredMove=Vector3.zero
+			hum.WalkSpeed=14
+			hum:Move(Vector3.zero,false)
+		else
+			desiredMove=idleMove.Magnitude>.05 and idleMove.Unit or Vector3.zero
+			hum.WalkSpeed=15.5
+			hum:Move(desiredMove,false)
+		end
 	end
 
 	if shownWeapon~=currentWeapon then makeWeaponModel(currentWeapon) end
@@ -224,10 +247,10 @@ RunService.RenderStepped:Connect(function(dt)
 		lastMoveSample=os.clock();if lastMovePos then local moved=(root.Position-lastMovePos).Magnitude;if desiredMove.Magnitude>.2 and moved<.16 then stuckFor+=.20 else stuckFor=math.max(0,stuckFor-.25) end;if stuckFor>.85 then hum.Jump=true;strafeSign*=-1;roamGoal=nil;pathWaypoints=nil;nextPathRefresh=0;stuckFor=0 end end;lastMovePos=root.Position
 	end
 
-	local lookTarget=aimPoint or (root.Position+(desiredMove.Magnitude>.1 and desiredMove or root.CFrame.LookVector)*30+Vector3.new(0,1.4,0));local camPos=head.Position+Vector3.new(0,.15,0);local desiredCam=CFrame.lookAt(camPos,lookTarget);camera.CFrame=camera.CFrame:Lerp(desiredCam,math.clamp(dt*(aimPoint and 5.2 or 3.2),0,1));root.CFrame=root.CFrame:Lerp(CFrame.lookAt(root.Position,Vector3.new(camera.CFrame.LookVector.X+root.Position.X,root.Position.Y,camera.CFrame.LookVector.Z+root.Position.Z)),math.clamp(dt*5,0,1))
-	bobTime+=dt*(hum.MoveDirection.Magnitude>.1 and 8.5 or 2);recoil*=math.max(0,1-dt*10)
-	if viewModel and weaponRoot then local bobX=math.sin(bobTime)*.018*hum.MoveDirection.Magnitude;local bobY=math.abs(math.cos(bobTime))*-.022*hum.MoveDirection.Magnitude;viewModel:PivotTo(camera.CFrame*CFrame.new(.46+bobX,-.62+bobY,-1.25+recoil)*CFrame.Angles(math.rad(-4-recoil*50),math.rad(-2),math.rad(-1))) end
+	local lookTarget=aimPoint or (root.Position+(desiredMove.Magnitude>.1 and desiredMove or root.CFrame.LookVector)*30+Vector3.new(0,1.4,0));local camPos=head.Position+Vector3.new(0,.15,0);local desiredCam=CFrame.lookAt(camPos,lookTarget);local cameraTurnSpeed=aimPoint and 5.2 or (idleMode and 1.65 or 3.2);camera.CFrame=camera.CFrame:Lerp(desiredCam,math.clamp(dt*cameraTurnSpeed,0,1));local rootTurnSpeed=idleMode and 2.2 or 5;root.CFrame=root.CFrame:Lerp(CFrame.lookAt(root.Position,Vector3.new(camera.CFrame.LookVector.X+root.Position.X,root.Position.Y,camera.CFrame.LookVector.Z+root.Position.Z)),math.clamp(dt*rootTurnSpeed,0,1))
+	bobTime+=dt*(hum.MoveDirection.Magnitude>.1 and (idleMode and 7 or 8.5) or 2);recoil*=math.max(0,1-dt*10)
+	if viewModel and weaponRoot then local bobScale=idleMode and .65 or 1;local bobX=math.sin(bobTime)*.018*hum.MoveDirection.Magnitude*bobScale;local bobY=math.abs(math.cos(bobTime))*-.022*hum.MoveDirection.Magnitude*bobScale;viewModel:PivotTo(camera.CFrame*CFrame.new(.46+bobX,-.62+bobY,-1.25+recoil)*CFrame.Angles(math.rad(-4-recoil*50),math.rad(-2),math.rad(-1))) end
 end)
 
-player.CharacterAdded:Connect(function() task.wait(.5);clearViewModel();roamGoal=nil;pathWaypoints=nil;aimPoint=nil end)
-print("PLAYER AI V2.4 READY - line of sight combat enabled. No wall shooting.")
+player.CharacterAdded:Connect(function() task.wait(.5);clearViewModel();roamGoal=nil;pathWaypoints=nil;aimPoint=nil;idleMove=Vector3.zero;idlePauseUntil=0;nextIdlePause=os.clock()+rng:NextNumber(5,9) end)
+print("PLAYER AI V2.5 READY - smooth idle patrol + line of sight combat.")
