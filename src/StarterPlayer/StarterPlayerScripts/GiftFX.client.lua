@@ -34,12 +34,6 @@ title.Position=UDim2.fromOffset(110,8);title.Size=UDim2.new(1,-120,0,36);title.B
 local sub=Instance.new("TextLabel")
 sub.Position=UDim2.fromOffset(112,45);sub.Size=UDim2.new(1,-120,0,26);sub.BackgroundTransparency=1;sub.Font=Enum.Font.GothamMedium;sub.TextXAlignment=Enum.TextXAlignment.Left;sub.TextScaled=true;sub.Text="";sub.TextColor3=Color3.fromRGB(210,218,232);sub.Parent=banner
 
-local help=Instance.new("TextLabel")
-help.AnchorPoint=Vector2.new(1,1);help.Position=UDim2.new(1,-16,1,-16);help.Size=UDim2.fromOffset(370,54);help.BackgroundColor3=Color3.fromRGB(10,12,18);help.BackgroundTransparency=.18;help.BorderSizePixel=0;help.TextColor3=Color3.fromRGB(225,232,245);help.Font=Enum.Font.GothamBold;help.TextSize=12;help.TextWrapped=true;help.Text="GIFT TESTS  Z Galaxy | X Shotgun | C Phoenix | V Horde | B Boss | N Universe | M Meteor";help.Parent=gui
-local hc=Instance.new("UICorner");hc.CornerRadius=UDim.new(0,10);hc.Parent=help
-
-task.delay(12,function() if help and help.Parent then TweenService:Create(help,TweenInfo.new(.5),{TextTransparency=.55,BackgroundTransparency=.65}):Play() end end)
-
 local token=0
 local function announce(data)
 	token+=1;local my=token
@@ -70,7 +64,7 @@ fxRemote.OnClientEvent:Connect(function(data)
 	elseif data.kind=="blackout" then screenFlash(Color3.fromRGB(90,40,130),.86,.7) end
 end)
 
--- Normal letter keys work even when first-person owns the mouse.
+-- Test keys remain active, but the old bottom-right helper box is intentionally gone.
 local tests={
 	[Enum.KeyCode.Z]="Galaxy",
 	[Enum.KeyCode.X]="Hand Hearts",
@@ -86,4 +80,4 @@ UserInputService.InputBegan:Connect(function(input,processed)
 	if gift then debugRemote:FireServer(gift) end
 end)
 
-print("GIFT FX READY - Z/X/C help, V/B/N/M attack tests.")
+print("GIFT FX READY - clean HUD, test keys active.")
