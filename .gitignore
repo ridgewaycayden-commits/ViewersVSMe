@@ -4,3 +4,4 @@
 *.rbxmx
 .DS_Store
 Thumbs.db
+src/ServerStorage/SampleData/MidtownManifestChunks/

@@ -1,0 +1,1799 @@
+local Workspace = game:GetService("Workspace")
+local CollectionService = game:GetService("CollectionService")
+local AssetService = game:GetService("AssetService")
+
+local RoadChunkPlan = require(script.Parent.Parent.RoadChunkPlan)
+local RoadProfile = require(script.Parent.Parent.RoadProfile)
+local WorldConfig = require(game:GetService("ReplicatedStorage").Shared.WorldConfig)
+
+local RoadBuilder = {}
+local editableMeshSetVertexNormalSupported = nil
+local doubleSidedCapabilityWarningIssued = false
+
+local function trySetVertexNormal(mesh, vertexId, normal)
+    if editableMeshSetVertexNormalSupported == false then
+        return
+    end
+
+    local ok = pcall(function()
+        mesh:SetVertexNormal(vertexId, normal)
+    end)
+    if ok then
+        editableMeshSetVertexNormalSupported = true
+    else
+        editableMeshSetVertexNormalSupported = false
+    end
+end
+
+local function tryEnableDoubleSided(part, builderLabel)
+    local ok, err = pcall(function()
+        part.DoubleSided = true
+    end)
+    if ok or doubleSidedCapabilityWarningIssued then
+        return ok
+    end
+    doubleSidedCapabilityWarningIssued = true
+    warn(("[%s] DoubleSided unavailable in this runtime: %s"):format(builderLabel, tostring(err)))
+    return false
+end
+
+-- Maps OSM surface tag → physical properties for road Parts and MeshParts.
+-- Surface physics tuned for realistic vehicle handling.
+-- Roblox Friction range 0-2; real tire-on-surface coefficients mapped to this range.
+-- Density affects mass/inertia. Elasticity affects bounce (low for all roads).
+-- FrictionWeight=1 means equal influence between wheel and surface.
+--
+-- Reference (dry conditions, rubber tires):
+--   Real asphalt μ ≈ 0.7-0.8  →  Roblox 0.75
+--   Real concrete μ ≈ 0.6-0.7 →  Roblox 0.65
+--   Real cobble μ  ≈ 0.5-0.6  →  Roblox 0.55
+--   Real gravel μ  ≈ 0.3-0.5  →  Roblox 0.40
+--   Real dirt μ    ≈ 0.3-0.4  →  Roblox 0.30
+--   Real sand μ    ≈ 0.2-0.3  →  Roblox 0.20
+--   Real ice μ     ≈ 0.1-0.2  →  Roblox 0.12
+
+local SURFACE_PHYSICS = {
+    -- Paved surfaces (high grip)
+    asphalt = PhysicalProperties.new(2.4, 0.75, 0.08, 1, 1),
+    concrete = PhysicalProperties.new(2.4, 0.65, 0.10, 1, 1),
+    asphalt_smooth = PhysicalProperties.new(2.4, 0.70, 0.08, 1, 1), -- newer asphalt
+
+    -- Stone surfaces (medium-high grip, some bump)
+    paving_stones = PhysicalProperties.new(2.4, 0.58, 0.12, 1, 1),
+    cobblestone = PhysicalProperties.new(2.4, 0.50, 0.12, 1, 1), -- uneven, bumpy
+    sett = PhysicalProperties.new(2.4, 0.52, 0.10, 1, 1), -- cut stone blocks
+    unhewn_cobblestone = PhysicalProperties.new(2.4, 0.45, 0.14, 1, 1), -- rough, very bumpy
+
+    -- Loose surfaces (low grip, vehicles slide)
+    gravel = PhysicalProperties.new(1.8, 0.38, 0.04, 1, 1),
+    fine_gravel = PhysicalProperties.new(1.8, 0.42, 0.04, 1, 1),
+    pebblestone = PhysicalProperties.new(1.8, 0.35, 0.05, 1, 1),
+    compacted = PhysicalProperties.new(2.0, 0.48, 0.05, 1, 1), -- packed earth, decent grip
+
+    -- Unpaved (low grip)
+    unpaved = PhysicalProperties.new(1.6, 0.32, 0.04, 1, 1),
+    dirt = PhysicalProperties.new(1.6, 0.28, 0.04, 1, 1),
+    earth = PhysicalProperties.new(1.6, 0.28, 0.04, 1, 1),
+    mud = PhysicalProperties.new(1.4, 0.18, 0.02, 1, 1), -- very slippery
+    sand = PhysicalProperties.new(1.4, 0.20, 0.02, 1, 1), -- wheels sink + slide
+    grass = PhysicalProperties.new(1.2, 0.30, 0.08, 1, 1), -- damp grass, moderate grip
+
+    -- Special surfaces
+    wood = PhysicalProperties.new(0.8, 0.45, 0.15, 1, 1), -- boardwalk, slightly bouncy
+    metal = PhysicalProperties.new(3.0, 0.35, 0.10, 1, 1), -- bridge grating, slippery
+    rubber = PhysicalProperties.new(1.2, 0.90, 0.20, 1, 1), -- playground, high grip
+    tartan = PhysicalProperties.new(1.2, 0.85, 0.15, 1, 1), -- running track
+    ice = PhysicalProperties.new(2.4, 0.12, 0.02, 1, 1), -- future: winter mode
+    snow = PhysicalProperties.new(1.0, 0.18, 0.05, 1, 1), -- future: winter mode
+}
+
+-- Default for roads with no surface tag (treated as good asphalt).
+local DEFAULT_ROAD_PHYSICS = PhysicalProperties.new(2.4, 0.75, 0.08, 1, 1)
+
+-- Concrete physics for bridge decks and tunnel surfaces.
+local CONCRETE_PHYSICS = PhysicalProperties.new(2.4, 0.65, 0.10, 1, 1)
+
+-- Extra-grip physics for steps/stairs (textured concrete, anti-slip).
+local STEPS_PHYSICS = PhysicalProperties.new(2.4, 0.85, 0.08, 1, 1)
+
+-- Returns the appropriate physical properties for a road entry.
+local function getPhysicsProperties(road)
+    if road.surface and SURFACE_PHYSICS[road.surface] then
+        return SURFACE_PHYSICS[road.surface]
+    end
+    if road.kind == "footway" or road.kind == "path" then
+        return SURFACE_PHYSICS.compacted
+    elseif road.kind == "track" then
+        return SURFACE_PHYSICS.gravel
+    end
+    return DEFAULT_ROAD_PHYSICS
+end
+
+-- Maps OSM surface tag → Roblox terrain material (checked before kind fallback)
+local SURFACE_MATERIAL = {
+    asphalt = Enum.Material.Asphalt,
+    concrete = Enum.Material.Concrete,
+    ["concrete:plates"] = Enum.Material.Concrete,
+    cobblestone = Enum.Material.Cobblestone,
+    paving_stones = Enum.Material.Cobblestone,
+    bricks = Enum.Material.Cobblestone,
+    sett = Enum.Material.Cobblestone,
+    gravel = Enum.Material.Pebble,
+    fine_gravel = Enum.Material.Pebble,
+    compacted = Enum.Material.Ground,
+    pebblestone = Enum.Material.Pebble,
+    rock = Enum.Material.Rock,
+    unpaved = Enum.Material.Ground,
+    dirt = Enum.Material.Ground,
+    earth = Enum.Material.Ground,
+    grass = Enum.Material.Grass,
+    wood = Enum.Material.WoodPlanks,
+    stepping_stones = Enum.Material.Pavement,
+    paved = Enum.Material.Concrete,
+    sand = Enum.Material.Sand,
+    metal = Enum.Material.DiamondPlate,
+}
+
+-- Maps road kind → Roblox terrain material for Terrain:FillBlock
+local ROAD_MATERIAL = {
+    -- Highways: smooth concrete
+    motorway = Enum.Material.Concrete,
+    motorway_link = Enum.Material.Concrete,
+    trunk = Enum.Material.Concrete,
+    trunk_link = Enum.Material.Concrete,
+    -- Primary/secondary: asphalt
+    primary = Enum.Material.Asphalt,
+    primary_link = Enum.Material.Asphalt,
+    secondary = Enum.Material.Asphalt,
+    secondary_link = Enum.Material.Asphalt,
+    -- Local streets: asphalt (slightly different feel via paint order)
+    tertiary = Enum.Material.Asphalt,
+    tertiary_link = Enum.Material.Asphalt,
+    residential = Enum.Material.Asphalt,
+    living_street = Enum.Material.Pavement,
+    service = Enum.Material.Limestone,
+    -- Pedestrian / cycling
+    footway = Enum.Material.Pavement,
+    path = Enum.Material.Cobblestone,
+    pedestrian = Enum.Material.SmoothPlastic,
+    cycleway = Enum.Material.Sandstone,
+    steps = Enum.Material.Slate,
+    bridleway = Enum.Material.Ground,
+    -- Unpaved
+    track = Enum.Material.Mud,
+    unclassified = Enum.Material.Ground,
+    road = Enum.Material.Ground,
+    default = Enum.Material.Asphalt,
+}
+
+local ROAD_THICKNESS = 1 -- studs; road fills 0.5 studs into terrain + 0.5 above
+local PAVEMENT_THICKNESS = 0.7
+local CURB_THICKNESS = 0.35
+local ROAD_SURFACE_LIFT = 0.2
+local PAVEMENT_SURFACE_LIFT = 0.25
+local CURB_SURFACE_LIFT = 0.45
+local BRIDGE_PILLAR_SPACING = 24
+local BRIDGE_MIN_PILLAR_CLEARANCE = 2.5
+local BRIDGE_GUARDRAIL_OFFSET = 0.15
+local STREET_LIGHT_INTERVAL = WorldConfig.StreetLightInterval or 50 -- studs between lamp posts
+local STREET_LIGHT_RANGE = WorldConfig.StreetLightRange or 40
+local STREET_LIGHT_BRIGHTNESS = 1
+local STREET_LIGHT_COLOR = Color3.fromRGB(255, 244, 214) -- warm white
+
+local function getRoadDetailParent(parent)
+    local detailFolder = parent:FindFirstChild("Detail")
+    if detailFolder and detailFolder:IsA("Folder") then
+        return detailFolder
+    end
+
+    detailFolder = Instance.new("Folder")
+    detailFolder.Name = "Detail"
+    detailFolder:SetAttribute("ArnisLodGroupKind", "detail")
+    CollectionService:AddTag(detailFolder, "LOD_DetailGroup")
+    detailFolder.Parent = parent
+    return detailFolder
+end
+
+-- Normalizes sidewalk mode: "separate" means sidewalks exist but are not
+-- attached to this road geometry, so treat as "no" for curb generation.
+local function normalizeSidewalkMode(sidewalkMode)
+    if sidewalkMode == "separate" then
+        return "no"
+    end
+    return sidewalkMode or "no"
+end
+
+local function getMaterial(road)
+    -- 1. OSM surface tag takes priority (most specific physical description)
+    if road.surface then
+        local m = SURFACE_MATERIAL[road.surface]
+        if m then
+            return m
+        end
+    end
+    -- 2. Legacy manifest material name (Enum.Material string)
+    if road.material then
+        local ok, m = pcall(function()
+            return Enum.Material[road.material]
+        end)
+        if ok and m then
+            return m
+        end
+    end
+    -- 3. Road kind fallback
+    return ROAD_MATERIAL[road.kind] or ROAD_MATERIAL.default
+end
+
+-- Maps road kind → approximate surface color for EditableMesh parts.
+-- These approximate the visual tones of Roblox terrain materials.
+local ROAD_COLOR = {
+    motorway = Color3.fromRGB(55, 55, 62),
+    motorway_link = Color3.fromRGB(55, 55, 62),
+    trunk = Color3.fromRGB(58, 58, 65),
+    trunk_link = Color3.fromRGB(58, 58, 65),
+    primary = Color3.fromRGB(60, 60, 65),
+    primary_link = Color3.fromRGB(60, 60, 65),
+    secondary = Color3.fromRGB(62, 62, 67),
+    secondary_link = Color3.fromRGB(62, 62, 67),
+    tertiary = Color3.fromRGB(65, 65, 70),
+    tertiary_link = Color3.fromRGB(65, 65, 70),
+    residential = Color3.fromRGB(68, 68, 72),
+    living_street = Color3.fromRGB(140, 135, 125),
+    service = Color3.fromRGB(160, 150, 135),
+    footway = Color3.fromRGB(140, 135, 125),
+    path = Color3.fromRGB(120, 110, 95),
+    pedestrian = Color3.fromRGB(175, 170, 160),
+    cycleway = Color3.fromRGB(150, 145, 128),
+    steps = Color3.fromRGB(155, 150, 143),
+    bridleway = Color3.fromRGB(100, 85, 68),
+    track = Color3.fromRGB(90, 78, 60),
+    unclassified = Color3.fromRGB(75, 70, 65),
+    road = Color3.fromRGB(70, 65, 62),
+    default = Color3.fromRGB(60, 60, 65),
+}
+
+-- Subkind-based color overrides for visual differentiation.
+-- When road.subkind is available, its color fully replaces the kind-based default.
+-- Motorway/trunk: darker, fresher asphalt. Residential/service: lighter, weathered.
+-- Track/path: warm earth tones.
+local SUBKIND_COLOR_TINT = {
+    motorway = Color3.fromRGB(48, 48, 55),
+    trunk = Color3.fromRGB(52, 52, 58),
+    primary = Color3.fromRGB(58, 58, 63),
+    secondary = Color3.fromRGB(60, 60, 65),
+    residential = Color3.fromRGB(65, 65, 70),
+    service = Color3.fromRGB(78, 76, 70),
+    track = Color3.fromRGB(95, 82, 62),
+    path = Color3.fromRGB(108, 96, 78),
+}
+
+local function getSubkindColorTint(road)
+    if road.subkind and SUBKIND_COLOR_TINT[road.subkind] then
+        return SUBKIND_COLOR_TINT[road.subkind]
+    end
+    return nil
+end
+
+local function getRoadColor(road)
+    local subkindTint = getSubkindColorTint(road)
+    if subkindTint then
+        return subkindTint
+    end
+    return ROAD_COLOR[road.kind] or ROAD_COLOR.default
+end
+
+local MATERIAL_COLOR = table.freeze({
+    [Enum.Material.Asphalt] = Color3.fromRGB(60, 60, 65),
+    [Enum.Material.Concrete] = Color3.fromRGB(145, 140, 130),
+    [Enum.Material.Pavement] = Color3.fromRGB(150, 146, 136),
+    [Enum.Material.Cobblestone] = Color3.fromRGB(120, 114, 104),
+    [Enum.Material.Ground] = Color3.fromRGB(100, 88, 70),
+    [Enum.Material.Slate] = Color3.fromRGB(102, 102, 108),
+    [Enum.Material.Limestone] = Color3.fromRGB(165, 155, 142),
+    [Enum.Material.Pebble] = Color3.fromRGB(106, 98, 90),
+    [Enum.Material.Mud] = Color3.fromRGB(82, 65, 48),
+    [Enum.Material.Sandstone] = Color3.fromRGB(168, 155, 128),
+})
+
+local function resolvePlannedRoadMaterial(material)
+    return material or Enum.Material.Asphalt
+end
+
+local function resolvePlannedRoadColor(color)
+    return color or ROAD_COLOR.default
+end
+
+local function getMaterialColor(material)
+    return MATERIAL_COLOR[material] or ROAD_COLOR.default
+end
+
+local function getStandalonePedestrianSurfaceRole(road)
+    local subkind = road and road.subkind
+    local kind = road and road.kind
+    local isPedestrianLike = kind == "footway" or kind == "path" or kind == "pedestrian"
+    if not isPedestrianLike then
+        return nil
+    end
+
+    if subkind == "sidewalk" then
+        return "sidewalk"
+    end
+    if subkind == "crossing" then
+        return "crossing"
+    end
+
+    return nil
+end
+
+local function shouldEmitRoadDecorations(road)
+    if getStandalonePedestrianSurfaceRole(road) ~= nil then
+        return false
+    end
+
+    local kind = road.kind
+    return kind ~= "footway" and kind ~= "path" and kind ~= "cycleway" and kind ~= "pedestrian"
+end
+
+-- Maps OSM sidewalkSurface tag → Roblox material for distinct sidewalk rendering.
+local SIDEWALK_SURFACE_MATERIAL = {
+    paving_stones = Enum.Material.Cobblestone,
+    concrete = Enum.Material.Concrete,
+    asphalt = Enum.Material.Asphalt,
+    gravel = Enum.Material.Pebble,
+    sett = Enum.Material.Cobblestone,
+}
+
+-- Returns the sidewalk material for a road, falling back to Pavement when
+-- the manifest does not carry a sidewalkSurface tag.
+local function getSidewalkMaterial(road)
+    if road.sidewalkSurface and SIDEWALK_SURFACE_MATERIAL[road.sidewalkSurface] then
+        return SIDEWALK_SURFACE_MATERIAL[road.sidewalkSurface]
+    end
+    return Enum.Material.Pavement
+end
+
+-- Emit a BillboardGui street-name label at the midpoint of a named road.
+-- Created once at import time; zero per-frame cost.
+local function emitStreetLabel(parent, road, midpoint, emittedNames)
+    if not road.name or road.name == "" then
+        return
+    end
+    -- Deduplicate: only one label per unique road name per chunk
+    if emittedNames then
+        if emittedNames[road.name] then
+            return
+        end
+        emittedNames[road.name] = true
+    end
+
+    local attachment = Instance.new("Attachment")
+    attachment.Name = "StreetLabel_" .. road.name
+    attachment.WorldCFrame = CFrame.new(midpoint + Vector3.new(0, 3, 0))
+    CollectionService:AddTag(attachment, "LOD_Detail")
+
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "StreetNameGui"
+    billboard.MaxDistance = 150
+    billboard.AlwaysOnTop = false
+    billboard.Size = UDim2.new(0, 200, 0, 30)
+    billboard.StudsOffset = Vector3.new(0, 0, 0)
+    billboard.Adornee = attachment
+
+    local label = Instance.new("TextLabel")
+    label.Name = "StreetName"
+    label.Size = UDim2.new(1, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = road.name
+    label.TextColor3 = Color3.fromRGB(255, 255, 255)
+    label.TextStrokeTransparency = 0.5
+    label.TextScaled = true
+    label.Font = Enum.Font.GothamBold
+    label.Parent = billboard
+
+    billboard.Parent = attachment
+    attachment.Parent = parent
+end
+
+-- Add lane-marking geometry for multi-lane roads.
+-- Center line: thin white strip (0.15 wide, 0.02 above road) for lanes >= 2.
+-- Oneway arrow: small triangle mesh (1.5 x 2 studs) at midpoint.
+local function paintLaneMarkings(parent, p1, p2, road)
+    local lanes = road.lanes
+    if not lanes or lanes < 2 then
+        return
+    end
+
+    local dir = (p2 - p1)
+    local segLen = dir.Magnitude
+    if segLen < 1 then
+        return
+    end
+
+    -- Center line: continuous thin white strip
+    local midPos = (p1 + p2) * 0.5
+    local y1 = p1.Y + 0.17 -- 0.15 road lift + 0.02 above
+    local y2 = p2.Y + 0.17
+    local startPos = Vector3.new(p1.X, y1, p1.Z)
+    local endPos = Vector3.new(p2.X, y2, p2.Z)
+    local centerPos = (startPos + endPos) * 0.5
+
+    local line = Instance.new("Part")
+    line.Name = "LaneCenterLine"
+    line.Size = Vector3.new(0.15, 0.02, segLen)
+    line.Material = Enum.Material.SmoothPlastic
+    line.Color = Color3.fromRGB(255, 255, 255)
+    line.Anchored = true
+    line.CanCollide = false
+    line.CastShadow = false
+    line.CFrame = CFrame.lookAt(centerPos, endPos)
+    CollectionService:AddTag(line, "LOD_Detail")
+    line.Parent = parent
+
+    -- Oneway directional arrow at midpoint
+    if road.oneway == "yes" or road.oneway == true then
+        local arrowY = (p1.Y + p2.Y) * 0.5 + 0.17
+        local arrowPos = Vector3.new(midPos.X, arrowY, midPos.Z)
+        local arrowTarget = Vector3.new(p2.X, p2.Y + 0.17, p2.Z)
+
+        local arrow = Instance.new("Part")
+        arrow.Name = "LaneOnewayArrow"
+        arrow.Size = Vector3.new(1.5, 0.02, 2)
+        arrow.Material = Enum.Material.SmoothPlastic
+        arrow.Color = Color3.fromRGB(255, 255, 255)
+        arrow.Anchored = true
+        arrow.CanCollide = false
+        arrow.CastShadow = false
+        arrow.CFrame = CFrame.lookAt(arrowPos, arrowTarget)
+        CollectionService:AddTag(arrow, "LOD_Detail")
+        arrow.Parent = parent
+    end
+end
+
+local function classifySegment(road, p1, p2, _chunk)
+    if road.elevated then
+        return "bridge", p1, p2
+    elseif road.tunnel then
+        return "tunnel", p1, p2
+    else
+        return "ground", p1, p2
+    end
+end
+
+local function paintStrip(terrain, p1, p2, width, thickness, material, surfaceLift, sideOffset)
+    local delta = p2 - p1
+    local length = delta.Magnitude
+    if length < 0.01 then
+        return nil, 0
+    end
+
+    -- Per-endpoint Y: follow the slope instead of averaging to a flat surface
+    local y1 = p1.Y + surfaceLift
+    local y2 = p2.Y + surfaceLift
+    local startPos = Vector3.new(p1.X, y1 - thickness * 0.5, p1.Z)
+    local endPos = Vector3.new(p2.X, y2 - thickness * 0.5, p2.Z)
+    local midPos = (startPos + endPos) * 0.5
+
+    -- CFrame.lookAt tilts the part to follow the slope between p1 and p2
+    local cf = CFrame.lookAt(midPos, endPos)
+    if sideOffset and math.abs(sideOffset) > 1e-6 then
+        cf = cf * CFrame.new(sideOffset, 0, 0)
+    end
+
+    terrain:FillBlock(cf, Vector3.new(width, thickness, length + 0.25), material)
+    return cf, length
+end
+
+-- Paint one road segment into terrain using FillBlock (ground-level roads).
+-- sidewalkMode: "both" | "left" | "right" | "no" | "separate"
+-- Left side  → negative sideOffset (CFrame local X < 0)
+-- Right side → positive sideOffset (CFrame local X > 0)
+local function paintSegment(terrain, p1, p2, road, width, material, sidewalkMode)
+    sidewalkMode = normalizeSidewalkMode(sidewalkMode)
+    local sidewalkWidth = RoadProfile.getSidewalkWidth(road, width)
+    local edgeBuffer = RoadProfile.getEdgeBufferWidth(road, width)
+
+    local hasSidewalkLeft = (sidewalkMode == "both" or sidewalkMode == "left") and sidewalkWidth > 0
+    local hasSidewalkRight = (sidewalkMode == "both" or sidewalkMode == "right") and sidewalkWidth > 0
+
+    -- Base pavement slab spans the full kerb-to-kerb width for the sides that
+    -- have a sidewalk; if both, it's symmetric; if one-sided, expand only that way.
+    local leftExtra = hasSidewalkLeft and (sidewalkWidth + edgeBuffer) or 0
+    local rightExtra = hasSidewalkRight and (sidewalkWidth + edgeBuffer) or 0
+    local totalPavedWidth = width + leftExtra + rightExtra
+    local pavementMaterial = (hasSidewalkLeft or hasSidewalkRight) and getSidewalkMaterial(road) or material
+
+    -- When one-sided the base slab needs to be off-centre by half the asymmetry.
+    local baseOffset = (rightExtra - leftExtra) * 0.5
+    paintStrip(
+        terrain,
+        p1,
+        p2,
+        totalPavedWidth,
+        PAVEMENT_THICKNESS,
+        pavementMaterial,
+        PAVEMENT_SURFACE_LIFT,
+        baseOffset ~= 0 and baseOffset or nil
+    )
+    paintStrip(terrain, p1, p2, width, ROAD_THICKNESS, material, ROAD_SURFACE_LIFT)
+
+    -- Curb on left side (negative offset)
+    if hasSidewalkLeft then
+        local curbOffset = -(width * 0.5 + CURB_THICKNESS * 0.5)
+        paintStrip(
+            terrain,
+            p1,
+            p2,
+            CURB_THICKNESS,
+            CURB_THICKNESS,
+            Enum.Material.Concrete,
+            CURB_SURFACE_LIFT,
+            curbOffset
+        )
+    end
+
+    -- Curb on right side (positive offset)
+    if hasSidewalkRight then
+        local curbOffset = width * 0.5 + CURB_THICKNESS * 0.5
+        paintStrip(
+            terrain,
+            p1,
+            p2,
+            CURB_THICKNESS,
+            CURB_THICKNESS,
+            Enum.Material.Concrete,
+            CURB_SURFACE_LIFT,
+            curbOffset
+        )
+    end
+end
+
+-- Build an elevated bridge/tunnel segment as a Part slab (not terrain).
+-- Bridges use a concrete deck Part; tunnels are skipped (underground).
+local function paintBridgeSegment(parent, p1, p2, width, material, chunk, sampleGroundY, road, sourceCount)
+    local delta = p2 - p1
+    local length = delta.Magnitude
+    if length < 0.01 then
+        return
+    end
+
+    local midPos = (p1 + p2) * 0.5
+    -- CFrame.lookAt tilts the deck to follow the slope between p1 and p2
+    local cf = CFrame.lookAt(midPos, p2)
+    local right = cf.RightVector
+
+    local deck = Instance.new("Part")
+    deck.Anchored = true
+    deck.CastShadow = true -- bridge deck casts meaningful shadows
+    deck.Size = Vector3.new(width, ROAD_THICKNESS, length + 0.1)
+    deck.Material = material
+    deck.CFrame = cf
+    -- Apply physics: use road-surface properties when available, else concrete deck default.
+    deck.CustomPhysicalProperties = road and getPhysicsProperties(road) or CONCRETE_PHYSICS
+    -- Tag for vehicle AI
+    CollectionService:AddTag(deck, "Road")
+    deck:SetAttribute("ArnisRoadSurfaceRole", getStandalonePedestrianSurfaceRole(road) or "road")
+    deck:SetAttribute("ArnisRoadKind", road and road.kind or "unknown")
+    deck:SetAttribute("ArnisRoadSubkind", road and (road.subkind or "none") or "none")
+    deck:SetAttribute("ArnisRoadSourceCount", sourceCount or 0)
+    if road and road.id then
+        deck:SetAttribute("ArnisRoadSourceIds", tostring(road.id))
+    end
+    if road then
+        if road.oneway then
+            deck:SetAttribute("Oneway", true)
+        end
+        if road.maxspeed then
+            deck:SetAttribute("MaxSpeed", road.maxspeed)
+        end
+        if road.lanes then
+            deck:SetAttribute("Lanes", road.lanes)
+        end
+    end
+    deck.Parent = parent
+
+    -- Guardrail posts every 8 studs on each side
+    local numPosts = math.floor(length / 8)
+    for k = 0, numPosts do
+        local t = (numPosts > 0) and (k / numPosts) or 0
+        local px = p1.X + (p2.X - p1.X) * t
+        local pz = p1.Z + (p2.Z - p1.Z) * t
+        local py = p1.Y + (p2.Y - p1.Y) * t
+        local railY = py + 1.5
+        local centerPos = Vector3.new(px, railY, pz)
+        for _, side in ipairs({ -1, 1 }) do
+            local post = Instance.new("Part")
+            post.Name = "BridgeRailPost"
+            post.Anchored = true
+            post.CastShadow = false
+            post.Size = Vector3.new(0.3, 3, 0.3)
+            post.Material = Enum.Material.Concrete
+            post.Color = Color3.fromRGB(180, 180, 190)
+            post.CFrame = CFrame.new(centerPos + right * (width * 0.5 + BRIDGE_GUARDRAIL_OFFSET) * side)
+            post.Parent = parent
+        end
+    end
+
+    if not chunk then
+        return
+    end
+
+    local supportCount = math.max(0, math.floor(length / BRIDGE_PILLAR_SPACING))
+    for k = 1, supportCount do
+        local t = k / (supportCount + 1)
+        local sx = p1.X + (p2.X - p1.X) * t
+        local sz = p1.Z + (p2.Z - p1.Z) * t
+        local deckY = p1.Y + (p2.Y - p1.Y) * t
+        local groundY = sampleGroundY(sx, sz)
+        local clearance = deckY - groundY - ROAD_THICKNESS * 0.5
+        if clearance > BRIDGE_MIN_PILLAR_CLEARANCE then
+            local support = Instance.new("Part")
+            support.Name = "BridgeSupport"
+            support.Anchored = true
+            support.CastShadow = true
+            support.Material = Enum.Material.Concrete
+            support.Color = Color3.fromRGB(150, 150, 160)
+            support.Size = Vector3.new(math.max(1.2, width * 0.12), clearance, math.max(1.2, width * 0.12))
+            support.CFrame = CFrame.new(sx, groundY + clearance * 0.5, sz)
+            support.Parent = parent
+        end
+    end
+end
+
+-- Place directional arrow markers on oneway roads every 30 studs.
+local function paintOnewayArrows(parent, p1, p2, _width, road)
+    if not road.oneway then
+        return
+    end
+
+    local dir = (p2 - p1)
+    local segLen = dir.Magnitude
+    if segLen < 20 then
+        return
+    end -- too short for arrows
+    dir = dir.Unit
+
+    -- Place arrows every 30 studs along the segment
+    local interval = 30
+    for dist = interval, segLen - interval, interval do
+        local t = dist / segLen
+        -- Interpolate Y along the slope
+        local arrowY = p1.Y + (p2.Y - p1.Y) * t + 0.2
+        local pos = Vector3.new(p1.X + (p2.X - p1.X) * t, arrowY, p1.Z + (p2.Z - p1.Z) * t)
+        -- Look-at target further along the slope for tilt
+        local tEnd = math.min(1, (dist + 1) / segLen)
+        local endPos =
+            Vector3.new(p1.X + (p2.X - p1.X) * tEnd, p1.Y + (p2.Y - p1.Y) * tEnd + 0.2, p1.Z + (p2.Z - p1.Z) * tEnd)
+
+        local arrow = Instance.new("Part")
+        arrow.Name = "OnewayArrow"
+        arrow.Size = Vector3.new(4, 0.05, 6)
+        arrow.Material = Enum.Material.SmoothPlastic
+        arrow.Color = Color3.fromRGB(255, 255, 255)
+        arrow.Anchored = true
+        arrow.CanCollide = false
+        arrow.CastShadow = false
+        -- Orient arrow following the slope
+        arrow.CFrame = CFrame.lookAt(pos, endPos)
+        arrow.Parent = parent
+    end
+end
+
+-- Add a white dashed centerline stripe on roads wider than 12 studs.
+local function paintCenterline(parent, p1, p2, width)
+    if width < 12 then
+        return
+    end
+    local delta = p2 - p1
+    local length = delta.Magnitude
+    if length < 4 then
+        return
+    end
+
+    local numDashes = math.floor(length / 6)
+    if numDashes < 1 then
+        return
+    end
+    for k = 0, numDashes - 1 do
+        local t = (k + 0.5) / numDashes
+        local cx = p1.X + (p2.X - p1.X) * t
+        local cz = p1.Z + (p2.Z - p1.Z) * t
+        local cy = p1.Y + (p2.Y - p1.Y) * t + 0.05 -- just above road surface
+
+        -- Look toward the next point along the slope for tilt
+        local tEnd = math.min(1, (k + 1) / numDashes)
+        local endX = p1.X + (p2.X - p1.X) * tEnd
+        local endZ = p1.Z + (p2.Z - p1.Z) * tEnd
+        local endY = p1.Y + (p2.Y - p1.Y) * tEnd + 0.05
+
+        local dash = Instance.new("Part")
+        dash.Name = "CenterlineDash"
+        dash.Anchored = true
+        dash.CastShadow = false
+        dash.CanCollide = false
+        dash.Size = Vector3.new(0.4, 0.1, math.min(3, length / numDashes * 0.6))
+        dash.Material = Enum.Material.SmoothPlastic
+        dash.Color = Color3.fromRGB(255, 255, 255)
+        dash.CFrame = CFrame.lookAt(Vector3.new(cx, cy, cz), Vector3.new(endX, endY, endZ))
+        dash.Parent = parent
+    end
+end
+
+-- Paint a tunnel segment: road surface plus ceiling and side walls.
+local function paintTunnelSegment(parent, p1, p2, width, road, sourceCount)
+    local dir = (p2 - p1)
+    local segLen = dir.Magnitude
+    if segLen < 0.1 then
+        return
+    end
+    dir = dir.Unit
+
+    local midpoint = (p1 + p2) * 0.5
+    -- Road surface (same as ground road but underground)
+    local roadPart = Instance.new("Part")
+    roadPart.Name = "TunnelRoad"
+    roadPart.Size = Vector3.new(width, 0.5, segLen)
+    roadPart.Material = Enum.Material.Asphalt
+    roadPart.Color = Color3.fromRGB(60, 60, 60)
+    roadPart.Anchored = true
+    roadPart.CanCollide = true
+    roadPart.CFrame = CFrame.lookAt(midpoint, p2) * CFrame.new(0, -0.25, 0)
+    -- Apply physics properties and tag for vehicle AI
+    roadPart.CustomPhysicalProperties = road and getPhysicsProperties(road) or DEFAULT_ROAD_PHYSICS
+    CollectionService:AddTag(roadPart, "Road")
+    roadPart:SetAttribute("ArnisRoadSurfaceRole", getStandalonePedestrianSurfaceRole(road) or "road")
+    roadPart:SetAttribute("ArnisRoadKind", road and road.kind or "unknown")
+    roadPart:SetAttribute("ArnisRoadSubkind", road and (road.subkind or "none") or "none")
+    roadPart:SetAttribute("ArnisRoadSourceCount", sourceCount or 0)
+    if road and road.id then
+        roadPart:SetAttribute("ArnisRoadSourceIds", tostring(road.id))
+    end
+    if road then
+        if road.oneway then
+            roadPart:SetAttribute("Oneway", true)
+        end
+        if road.maxspeed then
+            roadPart:SetAttribute("MaxSpeed", road.maxspeed)
+        end
+        if road.lanes then
+            roadPart:SetAttribute("Lanes", road.lanes)
+        end
+    end
+    roadPart.Parent = parent
+
+    -- Tunnel ceiling
+    local tunnelHeight = 12 -- studs clearance
+    local ceiling = Instance.new("Part")
+    ceiling.Name = "TunnelCeiling"
+    ceiling.Size = Vector3.new(width + 2, 1, segLen)
+    ceiling.Material = Enum.Material.Concrete
+    ceiling.Color = Color3.fromRGB(140, 140, 140)
+    ceiling.Anchored = true
+    ceiling.CanCollide = true
+    ceiling.CFrame = CFrame.lookAt(midpoint + Vector3.new(0, tunnelHeight, 0), p2 + Vector3.new(0, tunnelHeight, 0))
+    ceiling.Parent = parent
+
+    -- Tunnel walls (left and right)
+    for _, side in ipairs({ -1, 1 }) do
+        local wall = Instance.new("Part")
+        wall.Name = "TunnelWall"
+        wall.Size = Vector3.new(1, tunnelHeight, segLen)
+        wall.Material = Enum.Material.Concrete
+        wall.Color = Color3.fromRGB(160, 160, 160)
+        wall.Anchored = true
+        wall.CanCollide = true
+        wall.CFrame = CFrame.lookAt(
+            midpoint + Vector3.new(side * (width * 0.5 + 0.5), tunnelHeight * 0.5, 0),
+            p2 + Vector3.new(side * (width * 0.5 + 0.5), tunnelHeight * 0.5, 0)
+        )
+        wall.Parent = parent
+    end
+end
+
+-- Paint crosswalk stripes at a road endpoint for roads wider than 15 studs.
+local function paintCrosswalk(parent, position, direction, width)
+    local stripeCount = math.floor(width / 3)
+    local stripeWidth = 1.5
+    local stripeGap = 1.5
+
+    local perpDir = Vector3.new(-direction.Z, 0, direction.X) -- perpendicular
+
+    for i = 1, stripeCount do
+        local offset = (i - stripeCount / 2 - 0.5) * (stripeWidth + stripeGap)
+        local stripe = Instance.new("Part")
+        stripe.Name = "CrosswalkStripe"
+        stripe.Size = Vector3.new(stripeWidth, 0.05, 4)
+        stripe.Material = Enum.Material.SmoothPlastic
+        stripe.Color = Color3.fromRGB(255, 255, 255)
+        stripe.Anchored = true
+        stripe.CanCollide = false
+        stripe.CastShadow = false
+        stripe.CFrame = CFrame.lookAt(
+            position + perpDir * offset + Vector3.new(0, 0.15, 0),
+            position + perpDir * offset + Vector3.new(0, 0.15, 0) + direction
+        )
+        stripe.Parent = parent
+    end
+end
+
+-- Scatter manhole covers along the centre of major road segments.
+-- Placement is fully deterministic: no math.random is used.
+local function scatterManholes(parent, p1, p2, width, road)
+    local majorKinds = { primary = true, secondary = true, tertiary = true, trunk = true }
+    if not majorKinds[road.kind] then
+        return
+    end
+
+    local dir = (p2 - p1)
+    local segLen = dir.Magnitude
+    if segLen < 40 then
+        return
+    end
+    dir = dir.Unit
+
+    local interval = 60
+    local seed = string.len(road.id or "")
+
+    for dist = 30, segLen - 30, interval do
+        -- Deterministic lateral offset derived from seed and integer distance
+        local lateralOffset = ((seed * 7 + math.floor(dist)) % 10 - 5) * (width * 0.06)
+        local pos = p1 + dir * dist
+        local perp = Vector3.new(-dir.Z, 0, dir.X)
+        local surfaceY = pos.Y + 0.15
+
+        local manhole = Instance.new("Part")
+        manhole.Name = "Manhole"
+        manhole.Shape = Enum.PartType.Cylinder
+        manhole.Size = Vector3.new(0.05, 2.5, 2.5)
+        manhole.Material = Enum.Material.DiamondPlate
+        manhole.Color = Color3.fromRGB(50, 50, 55)
+        manhole.Anchored = true
+        manhole.CanCollide = false
+        manhole.CastShadow = false
+        manhole.CFrame = CFrame.new(pos.X + perp.X * lateralOffset, surfaceY, pos.Z + perp.Z * lateralOffset)
+            * CFrame.Angles(0, 0, math.pi / 2)
+        CollectionService:AddTag(manhole, "LOD_Detail")
+        manhole.Parent = parent
+    end
+end
+
+-- Scatter drain grates along curb lines on roads with sidewalks.
+-- Placement is fully deterministic: no math.random is used.
+local function scatterDrainGrates(parent, p1, p2, width, sidewalkMode)
+    if sidewalkMode == "no" then
+        return
+    end
+
+    local dir = (p2 - p1)
+    local segLen = dir.Magnitude
+    if segLen < 30 then
+        return
+    end
+    dir = dir.Unit
+    local perp = Vector3.new(-dir.Z, 0, dir.X)
+
+    local interval = 40
+    local halfWidth = width * 0.5
+
+    for dist = 20, segLen - 20, interval do
+        local pos = p1 + dir * dist
+        local surfaceY = pos.Y + 0.12
+
+        for _, side in ipairs({ -1, 1 }) do
+            local wantLeft = (sidewalkMode == "both" or sidewalkMode == "left")
+            local wantRight = (sidewalkMode == "both" or sidewalkMode == "right")
+            if (side == -1 and wantLeft) or (side == 1 and wantRight) then
+                local grate = Instance.new("Part")
+                grate.Name = "DrainGrate"
+                grate.Size = Vector3.new(1.5, 0.05, 0.8)
+                grate.Material = Enum.Material.DiamondPlate
+                grate.Color = Color3.fromRGB(40, 40, 45)
+                grate.Anchored = true
+                grate.CanCollide = false
+                grate.CastShadow = false
+                grate.CFrame = CFrame.lookAt(
+                    Vector3.new(
+                        pos.X + perp.X * halfWidth * side * 0.95,
+                        surfaceY,
+                        pos.Z + perp.Z * halfWidth * side * 0.95
+                    ),
+                    Vector3.new(
+                        pos.X + perp.X * halfWidth * side * 0.95,
+                        surfaceY,
+                        pos.Z + perp.Z * halfWidth * side * 0.95
+                    ) + dir
+                )
+                CollectionService:AddTag(grate, "LOD_Detail")
+                grate.Parent = parent
+            end
+        end
+    end
+end
+
+-- Place PointLight lamp posts along a ground-level segment at fixed intervals.
+local function placeStreetLights(parent, p1, p2, width)
+    local delta = p2 - p1
+    local length = delta.Magnitude
+    if length < 1 then
+        return
+    end
+
+    -- Use horizontal direction for the perpendicular offset (lights stay vertical)
+    local horizDir = Vector3.new(delta.X, 0, delta.Z)
+    if horizDir.Magnitude < 0.01 then
+        return
+    end
+    local cf = CFrame.lookAt(Vector3.new(p1.X, 0, p1.Z), Vector3.new(p2.X, 0, p2.Z))
+    local right = cf.RightVector
+
+    local numLights = math.max(1, math.floor(length / STREET_LIGHT_INTERVAL))
+    for k = 0, numLights - 1 do
+        local t = (k + 0.5) / numLights
+        local lx = p1.X + (p2.X - p1.X) * t
+        local lz = p1.Z + (p2.Z - p1.Z) * t
+        local ly = p1.Y + (p2.Y - p1.Y) * t + 8 -- pole height above road
+
+        -- Alternate sides for a staggered look
+        local side = (k % 2 == 0) and 1 or -1
+        local lampPos = Vector3.new(lx, ly, lz) + right * (width * 0.5 + 1) * side
+
+        local pole = Instance.new("Part")
+        pole.Name = "StreetLight"
+        pole.Anchored = true
+        pole.CastShadow = false
+        pole.CanCollide = false
+        pole.Size = Vector3.new(0.3, 8, 0.3)
+        pole.Material = Enum.Material.SmoothPlastic
+        pole.Color = Color3.fromRGB(80, 80, 85)
+        pole.CFrame = CFrame.new(Vector3.new(lx, p1.Y + (p2.Y - p1.Y) * t + 4, lz) + right * (width * 0.5 + 1) * side)
+        pole.Parent = parent
+
+        local head = Instance.new("Part")
+        head.Name = "StreetLightHead"
+        head.Anchored = true
+        head.CastShadow = false
+        head.CanCollide = false
+        head.Size = Vector3.new(0.6, 0.3, 0.6)
+        head.Material = Enum.Material.SmoothPlastic
+        head.Color = Color3.fromRGB(220, 220, 220)
+        head.CFrame = CFrame.new(lampPos)
+        CollectionService:AddTag(head, "StreetLight")
+        head.Parent = parent
+
+        local light = Instance.new("PointLight")
+        light.Range = STREET_LIGHT_RANGE
+        light.Brightness = STREET_LIGHT_BRIGHTNESS
+        light.Color = STREET_LIGHT_COLOR
+        light.Parent = head
+    end
+end
+
+-- Render stairway steps as stacked Part slabs between two points.
+local function paintSteps(parent, p1, p2, width, road, sourceCount)
+    local dir = (p2 - p1)
+    local segLen = dir.Magnitude
+    if segLen < 1 then
+        return
+    end
+    dir = dir.Unit
+
+    -- Compute height difference (steps have varying Y)
+    local heightDiff = math.abs(p2.Y - p1.Y)
+
+    -- Flat path: no meaningful height change — render as a single flat slab.
+    if heightDiff < 0.5 then
+        local flatPart = Instance.new("Part")
+        flatPart.Name = "FlatPath"
+        flatPart.Size = Vector3.new(width, 0.3, segLen)
+        flatPart.Material = Enum.Material.Concrete
+        flatPart.Color = Color3.fromRGB(180, 175, 168)
+        flatPart.Anchored = true
+        flatPart.CanCollide = true
+        flatPart.CustomPhysicalProperties = STEPS_PHYSICS
+        flatPart:SetAttribute("ArnisRoadSurfaceRole", getStandalonePedestrianSurfaceRole(road) or "road")
+        flatPart:SetAttribute("ArnisRoadKind", road and road.kind or "steps")
+        flatPart:SetAttribute("ArnisRoadSubkind", road and (road.subkind or "none") or "none")
+        flatPart:SetAttribute("ArnisRoadSourceCount", sourceCount or 0)
+        if road and road.id then
+            flatPart:SetAttribute("ArnisRoadSourceIds", tostring(road.id))
+        end
+        CollectionService:AddTag(flatPart, "Road")
+        flatPart.CFrame = CFrame.lookAt(
+            Vector3.new((p1.X + p2.X) * 0.5, (p1.Y + p2.Y) * 0.5, (p1.Z + p2.Z) * 0.5),
+            Vector3.new(p2.X, (p1.Y + p2.Y) * 0.5, p2.Z)
+        )
+        flatPart.Parent = parent
+        return
+    end
+
+    local stepCount = math.max(2, math.floor(heightDiff / 0.5)) -- ~0.5 stud per step (~0.15m)
+    local stepDepth = segLen / stepCount
+    local stepHeight = heightDiff / stepCount
+    local goingUp = p2.Y > p1.Y
+
+    for i = 0, stepCount - 1 do
+        local t = i / stepCount
+        local stepPos = p1 + dir * (t * segLen + stepDepth * 0.5)
+        local stepY = p1.Y + (goingUp and 1 or -1) * (i * stepHeight) + stepHeight * 0.5
+
+        local step = Instance.new("Part")
+        step.Name = "Step"
+        step.Size = Vector3.new(width, stepHeight, stepDepth)
+        step.Material = Enum.Material.Concrete
+        step.Color = Color3.fromRGB(180, 175, 168)
+        step.Anchored = true
+        step.CanCollide = true
+        step.CustomPhysicalProperties = STEPS_PHYSICS -- extra grip for stairs
+        step:SetAttribute("ArnisRoadSurfaceRole", getStandalonePedestrianSurfaceRole(road) or "road")
+        step:SetAttribute("ArnisRoadKind", road and road.kind or "steps")
+        step:SetAttribute("ArnisRoadSubkind", road and (road.subkind or "none") or "none")
+        step:SetAttribute("ArnisRoadSourceCount", i == 0 and (sourceCount or 0) or 0)
+        if road and road.id then
+            step:SetAttribute("ArnisRoadSourceIds", tostring(road.id))
+        end
+        CollectionService:AddTag(step, "Road")
+        step.CFrame = CFrame.lookAt(
+            Vector3.new(stepPos.X, stepY, stepPos.Z),
+            Vector3.new(stepPos.X + dir.X, stepY, stepPos.Z + dir.Z)
+        )
+        step.Parent = parent
+    end
+end
+
+local function buildChunkPlan(roads, originStuds, chunk)
+    return RoadChunkPlan.build(roads, originStuds, chunk, {
+        classifySegment = classifySegment,
+        getMaterial = getMaterial,
+        getRoadColor = getRoadColor,
+    })
+end
+
+local function executeRoadPlan(parent, detailParent, roadPlan, emittedNames)
+    local road = roadPlan.road
+    local width = roadPlan.width
+    local material = resolvePlannedRoadMaterial(roadPlan.material)
+    local sidewalkMode = roadPlan.sidewalkMode
+
+    if road.kind == "steps" then
+        for segmentIndex, segment in ipairs(roadPlan.segments) do
+            paintSteps(parent, segment.p1, segment.p2, width, road, segmentIndex == 1 and 1 or 0)
+        end
+        return
+    end
+
+    for segmentIndex, segment in ipairs(roadPlan.segments) do
+        if segment.mode == "bridge" then
+            paintBridgeSegment(
+                parent,
+                segment.p1,
+                segment.p2,
+                width,
+                material,
+                roadPlan.chunk,
+                roadPlan.sampleGroundY,
+                road,
+                segmentIndex == 1 and 1 or 0
+            )
+        elseif segment.mode == "tunnel" then
+            paintTunnelSegment(parent, segment.p1, segment.p2, width, road, segmentIndex == 1 and 1 or 0)
+        elseif segment.mode == "ground" then
+            paintSegment(Workspace.Terrain, segment.p1, segment.p2, road, width, material, sidewalkMode)
+            paintCenterline(detailParent, segment.p1, segment.p2, width)
+            paintOnewayArrows(detailParent, segment.p1, segment.p2, width, road)
+            scatterManholes(detailParent, segment.p1, segment.p2, width, road)
+            scatterDrainGrates(detailParent, segment.p1, segment.p2, width, sidewalkMode)
+            if road.lit and WorldConfig.EnableStreetLighting ~= false then
+                placeStreetLights(detailParent, segment.p1, segment.p2, width)
+            end
+        end
+    end
+
+    if width > 15 and roadPlan.firstEndpoint and roadPlan.firstDirection then
+        paintCrosswalk(detailParent, roadPlan.firstEndpoint, roadPlan.firstDirection, width)
+    end
+    if width > 15 and roadPlan.lastEndpoint and roadPlan.lastDirection then
+        paintCrosswalk(detailParent, roadPlan.lastEndpoint, roadPlan.lastDirection, width)
+    end
+
+    -- Lane markings (center line + oneway arrow) per ground segment
+    for _, segment in ipairs(roadPlan.segments) do
+        if segment.mode == "ground" and shouldEmitRoadDecorations(road) then
+            paintLaneMarkings(detailParent, segment.p1, segment.p2, road)
+        end
+    end
+
+    -- Street name label at the road midpoint (once per road, not per segment)
+    if #roadPlan.segments > 0 then
+        local midIdx = math.ceil(#roadPlan.segments / 2)
+        local midSeg = roadPlan.segments[midIdx]
+        local midpoint = (midSeg.p1 + midSeg.p2) * 0.5
+        emitStreetLabel(detailParent, road, midpoint, emittedNames)
+    end
+end
+
+-- Build ALL roads in a chunk by painting them into the terrain.
+function RoadBuilder.BuildAll(parent, roads, originStuds, chunk, maybeYield, preparedChunkPlan)
+    if not roads or #roads == 0 then
+        return
+    end
+    local detailParent = getRoadDetailParent(parent)
+    local emittedNames = {} -- dedup: one label per unique road name per chunk
+    local chunkPlan = preparedChunkPlan or buildChunkPlan(roads, originStuds, chunk)
+    for _, roadPlan in ipairs(chunkPlan.roads) do
+        executeRoadPlan(parent, detailParent, roadPlan, emittedNames)
+        if maybeYield then
+            maybeYield(false)
+        end
+    end
+end
+
+function RoadBuilder.Build(parent, road, originStuds, chunk, preparedChunkPlan)
+    local detailParent = getRoadDetailParent(parent)
+    local chunkPlan = preparedChunkPlan or buildChunkPlan({ road }, originStuds, chunk)
+    if chunkPlan.roads[1] then
+        executeRoadPlan(parent, detailParent, chunkPlan.roads[1])
+    end
+end
+
+function RoadBuilder.FallbackBuild(parent, road, originStuds, chunk, detailParent, preparedChunkPlan)
+    detailParent = detailParent or getRoadDetailParent(parent)
+    local chunkPlan = preparedChunkPlan or buildChunkPlan({ road }, originStuds, chunk)
+    if chunkPlan.roads[1] then
+        executeRoadPlan(parent, detailParent, chunkPlan.roads[1])
+    end
+end
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- EditableMesh accumulator: collects quad strips and flushes to MeshPart when
+-- the triangle budget is reached or at the end of a chunk.
+-- ──────────────────────────────────────────────────────────────────────────────
+
+local RoadMeshAccumulator = {}
+RoadMeshAccumulator.__index = RoadMeshAccumulator
+
+function RoadMeshAccumulator.new(parent, name, material, color, physicsProps, role, kindBucket, subkindBucket)
+    local self = setmetatable({}, RoadMeshAccumulator)
+    self.parent = parent
+    self.name = name
+    self.material = resolvePlannedRoadMaterial(material)
+    self.color = resolvePlannedRoadColor(color)
+    self.physicsProps = physicsProps or DEFAULT_ROAD_PHYSICS
+    self.role = role
+    self.kindBucket = kindBucket
+    self.subkindBucket = subkindBucket
+    self.vertices = {}
+    self.normals = {}
+    self.triangles = {}
+    self.meshCount = 0
+    self.pendingSourceRoadCount = 0
+    self.pendingRoadIds = {}
+    self.pendingRoadIdOrder = {}
+    self.MAX_TRIANGLES = 18000
+    self.totalVertexCount = 0
+    self.totalTriangleCount = 0
+    self.totalMeshCreateMs = 0
+    self.canCollide = true
+    self.canQuery = true
+    self.collisionFidelity = Enum.CollisionFidelity.Hull
+    return self
+end
+
+function RoadMeshAccumulator:registerRoadSource(roadId)
+    local key = tostring(roadId or "__anonymous__")
+    if self.pendingRoadIds[key] then
+        return
+    end
+    self.pendingRoadIds[key] = true
+    self.pendingRoadIdOrder[#self.pendingRoadIdOrder + 1] = key
+    self.pendingSourceRoadCount += 1
+end
+
+function RoadMeshAccumulator:addQuad(p1, p2, p3, p4, normal)
+    if #self.triangles + 2 > self.MAX_TRIANGLES then
+        self:flush()
+    end
+    local base = #self.vertices
+    local resolvedNormal = normal or Vector3.new(0, 1, 0)
+    self.vertices[base + 1] = p1
+    self.vertices[base + 2] = p2
+    self.vertices[base + 3] = p3
+    self.vertices[base + 4] = p4
+    self.normals[base + 1] = resolvedNormal
+    self.normals[base + 2] = resolvedNormal
+    self.normals[base + 3] = resolvedNormal
+    self.normals[base + 4] = resolvedNormal
+    table.insert(self.triangles, { base + 1, base + 2, base + 3 })
+    table.insert(self.triangles, { base + 1, base + 3, base + 4 })
+end
+
+function RoadMeshAccumulator:addRoadStrip(p1, p2, width, surfaceLift, sideOffset, surfaceThickness)
+    local dir = (p2 - p1)
+    local segLen = dir.Magnitude
+    if segLen < 0.1 then
+        return
+    end
+    -- Horizontal direction for perpendicular offset (keep perp flat)
+    local horizDir = Vector3.new(dir.X, 0, dir.Z)
+    if horizDir.Magnitude < 0.01 then
+        return
+    end
+    horizDir = horizDir.Unit
+    local unitPerp = Vector3.new(-horizDir.Z, 0, horizDir.X)
+    local halfWidth = width * 0.5
+    local lateral = unitPerp * (sideOffset or 0)
+    local perp = unitPerp * halfWidth
+
+    -- Per-endpoint Y: vertices at p1 and p2 follow the slope
+    local y1 = p1.Y + (surfaceLift or 0.15)
+    local y2 = p2.Y + (surfaceLift or 0.15)
+    local thickness = math.max(surfaceThickness or 0.2, 0.05)
+
+    local v1 = Vector3.new(p1.X, y1, p1.Z) - perp + lateral
+    local v2 = Vector3.new(p1.X, y1, p1.Z) + perp + lateral
+    local v3 = Vector3.new(p2.X, y2, p2.Z) + perp + lateral
+    local v4 = Vector3.new(p2.X, y2, p2.Z) - perp + lateral
+
+    local down = Vector3.new(0, thickness, 0)
+    local b1 = v1 - down
+    local b2 = v2 - down
+    local b3 = v3 - down
+    local b4 = v4 - down
+
+    self:addQuad(v1, v2, v3, v4, Vector3.new(0, 1, 0))
+    self:addQuad(b4, b3, b2, b1, Vector3.new(0, -1, 0))
+    self:addQuad(v4, v3, b3, b4, horizDir)
+    self:addQuad(v2, v1, b1, b2, -horizDir)
+    self:addQuad(v1, v4, b4, b1, -unitPerp)
+    self:addQuad(v3, v2, b2, b3, unitPerp)
+end
+
+--- Load a Rust pre-computed road mesh (flat arrays) into this accumulator.
+--- meshData = { vertices = {x,y,z,...}, triangles = {v0,v1,v2,...}, normals = {nx,ny,nz,...} }
+--- originStuds = Vector3 chunk origin to convert from chunk-local to world space.
+function RoadMeshAccumulator:addPrecomputedMesh(meshData, originStuds)
+    local verts = meshData.vertices
+    local tris = meshData.triangles
+    local norms = meshData.normals
+    if not verts or not tris or #verts < 3 or #tris < 3 then
+        return
+    end
+    -- Truncate to whole triples so a malformed chunk (e.g. a precomputed
+    -- mesh with a stray float or a stray index) can't crash the import
+    -- with "attempt to perform arithmetic (add) on number and nil". The
+    -- oversized-batch path below already guards reads with `or 0`; the
+    -- fast path needs matching defense.
+    local vertFloatCount = math.floor(#verts / 3) * 3
+    local triIndexCount = math.floor(#tris / 3) * 3
+    if vertFloatCount == 0 or triIndexCount == 0 then
+        return
+    end
+    local triCount = triIndexCount / 3
+    if #self.triangles + triCount <= self.MAX_TRIANGLES then
+        local base = #self.vertices
+        -- Accept both JSON-decoded manifest origins (lowercase {x,y,z}) and
+-- Roblox Vector3 origins (uppercase {X,Y,Z}). Pre-lazy-fetcher this
+-- path only saw Vector3 because the embedded SampleData trampolined
+-- through a conversion step, but the new external_url chunks pass
+-- chunk.originStuds through directly from the manifest table.
+local ox = originStuds.X or originStuds.x or 0
+local oy = originStuds.Y or originStuds.y or 0
+local oz = originStuds.Z or originStuds.z or 0
+        local vertexCountOut = vertFloatCount / 3
+        for i = 1, vertFloatCount, 3 do
+            local vi = base + (i - 1) / 3 + 1
+            self.vertices[vi] = Vector3.new(
+                (verts[i] or 0) + ox,
+                (verts[i + 1] or 0) + oy,
+                (verts[i + 2] or 0) + oz
+            )
+            self.normals[vi] = if norms and #norms >= i + 2 and norms[i] and norms[i + 1] and norms[i + 2]
+                then Vector3.new(norms[i], norms[i + 1], norms[i + 2])
+                else Vector3.new(0, 1, 0)
+        end
+        for i = 1, triIndexCount, 3 do
+            local a = tris[i]
+            local b = tris[i + 1]
+            local c = tris[i + 2]
+            -- Skip any triangle whose indices are nil or out of the range
+            -- of vertices we actually materialized — those would produce
+            -- a degenerate mesh and potentially another nil-index crash
+            -- downstream at flush time.
+            if a ~= nil and b ~= nil and c ~= nil
+                and a >= 0 and a < vertexCountOut
+                and b >= 0 and b < vertexCountOut
+                and c >= 0 and c < vertexCountOut
+            then
+                self.triangles[#self.triangles + 1] = {
+                    base + a + 1,
+                    base + b + 1,
+                    base + c + 1,
+                }
+            end
+        end
+        return
+    end
+    -- Oversized: flush existing, then split into batches
+    self:flush()
+    -- Accept both JSON-decoded manifest origins (lowercase {x,y,z}) and
+-- Roblox Vector3 origins (uppercase {X,Y,Z}). Pre-lazy-fetcher this
+-- path only saw Vector3 because the embedded SampleData trampolined
+-- through a conversion step, but the new external_url chunks pass
+-- chunk.originStuds through directly from the manifest table.
+local ox = originStuds.X or originStuds.x or 0
+local oy = originStuds.Y or originStuds.y or 0
+local oz = originStuds.Z or originStuds.z or 0
+    local maxTrisPerBatch = self.MAX_TRIANGLES
+    for batchStart = 1, #tris, maxTrisPerBatch * 3 do
+        local batchEnd = math.min(batchStart + maxTrisPerBatch * 3 - 1, #tris)
+        local vertexRemap = {}
+        for i = batchStart, batchEnd do
+            local rustIdx = tris[i]
+            -- rustIdx can be nil if the incoming triangle list is sparse.
+            -- Using nil as a table key throws, so skip instead.
+            if rustIdx ~= nil and vertexRemap[rustIdx] == nil then
+                local fi = rustIdx * 3 + 1
+                local pos = Vector3.new(
+                    (verts[fi] or 0) + ox,
+                    (verts[fi + 1] or 0) + oy,
+                    (verts[fi + 2] or 0) + oz
+                )
+                local normal = if norms and #norms >= fi + 2 and norms[fi] and norms[fi + 1] and norms[fi + 2]
+                    then Vector3.new(norms[fi], norms[fi + 1], norms[fi + 2])
+                    else Vector3.new(0, 1, 0)
+                local vi = #self.vertices + 1
+                self.vertices[vi] = pos
+                self.normals[vi] = normal
+                vertexRemap[rustIdx] = vi
+            end
+        end
+        for i = batchStart, batchEnd, 3 do
+            local a = tris[i] ~= nil and vertexRemap[tris[i]] or nil
+            local b = tris[i + 1] ~= nil and vertexRemap[tris[i + 1]] or nil
+            local c = tris[i + 2] ~= nil and vertexRemap[tris[i + 2]] or nil
+            if a and b and c then
+                self.triangles[#self.triangles + 1] = { a, b, c }
+            end
+        end
+        if batchEnd < #tris then
+            self:flush()
+        end
+    end
+end
+
+function RoadMeshAccumulator:flush()
+    if #self.triangles == 0 then
+        return
+    end
+
+    local vertexCount = #self.vertices
+    local triangleCount = #self.triangles
+
+    self.totalVertexCount += vertexCount
+    self.totalTriangleCount += triangleCount
+
+    local minBound = self.vertices[1]
+    local maxBound = self.vertices[1]
+    for i = 2, #self.vertices do
+        local pos = self.vertices[i]
+        minBound = Vector3.new(math.min(minBound.X, pos.X), math.min(minBound.Y, pos.Y), math.min(minBound.Z, pos.Z))
+        maxBound = Vector3.new(math.max(maxBound.X, pos.X), math.max(maxBound.Y, pos.Y), math.max(maxBound.Z, pos.Z))
+    end
+    local meshOrigin = (minBound + maxBound) * 0.5
+
+    local meshOk, mesh = pcall(function()
+        return AssetService:CreateEditableMesh()
+    end)
+    if not meshOk or not mesh then
+        warn("[RoadMeshAccumulator] CreateEditableMesh failed: " .. tostring(mesh))
+        self:flushAsParts(meshOrigin, minBound, maxBound)
+        return
+    end
+
+    local vids = {}
+    for i, pos in ipairs(self.vertices) do
+        vids[i] = mesh:AddVertex(pos - meshOrigin)
+        trySetVertexNormal(mesh, vids[i], self.normals[i])
+    end
+    for _, tri in ipairs(self.triangles) do
+        mesh:AddTriangle(vids[tri[1]], vids[tri[2]], vids[tri[3]])
+    end
+
+    self.meshCount = self.meshCount + 1
+    -- Collision fidelity must be baked during MeshPart creation for road raycasts.
+    local meshCreateStartedAt = os.clock()
+    local partOk, part = pcall(function()
+        return AssetService:CreateMeshPartAsync(Content.fromObject(mesh), {
+            CollisionFidelity = self.collisionFidelity,
+        })
+    end)
+    if not partOk or not part then
+        warn("[RoadMeshAccumulator] CreateMeshPartAsync failed: " .. tostring(part))
+        self:flushAsParts(meshOrigin, minBound, maxBound)
+        return
+    end
+    self.totalMeshCreateMs += (os.clock() - meshCreateStartedAt) * 1000
+    part.Name = string.format("%s_mesh_%d", self.name, self.meshCount)
+    part.Material = self.material
+    part.Color = self.color
+    part.Anchored = true
+    part:PivotTo(CFrame.new(meshOrigin))
+    part.CanCollide = self.canCollide
+    part.CanQuery = self.canQuery
+    part.CastShadow = true
+    tryEnableDoubleSided(part, "RoadMeshAccumulator")
+    part.CustomPhysicalProperties = self.physicsProps
+    if self.role then
+        part:SetAttribute("ArnisRoadSurfaceRole", self.role)
+    end
+    if self.kindBucket then
+        part:SetAttribute("ArnisRoadKind", self.kindBucket)
+    end
+    if self.subkindBucket then
+        part:SetAttribute("ArnisRoadSubkind", self.subkindBucket)
+    end
+    part:SetAttribute("ArnisRoadSourceCount", self.pendingSourceRoadCount)
+    if #self.pendingRoadIdOrder > 0 then
+        part:SetAttribute("ArnisRoadSourceIds", table.concat(self.pendingRoadIdOrder, "\n"))
+    end
+    if self.role == nil or self.role == "road" then
+        CollectionService:AddTag(part, "Road")
+    end
+    part.Parent = self.parent
+
+    self.vertices = {}
+    self.normals = {}
+    self.triangles = {}
+    self.pendingSourceRoadCount = 0
+    self.pendingRoadIds = {}
+    self.pendingRoadIdOrder = {}
+end
+
+-- Fallback: emit a simple box Part when EditableMesh/CreateMeshPartAsync is
+-- unavailable (e.g. play-mode permission restrictions).
+function RoadMeshAccumulator:flushAsParts(meshOrigin, minBound, maxBound)
+    warn(string.format(
+        "[RoadMeshAccumulator] flushAsParts fallback for %s: %d verts, %d tris",
+        self.name, #self.vertices, #self.triangles
+    ))
+    self.meshCount = self.meshCount + 1
+    local size = maxBound - minBound
+    size = Vector3.new(
+        math.max(size.X, 0.15),
+        math.max(size.Y, 0.15),
+        math.max(size.Z, 0.15)
+    )
+    local part = Instance.new("Part")
+    part.Name = string.format("%s_fallback_%d", self.name, self.meshCount)
+    part.Size = size
+    part.CFrame = CFrame.new(meshOrigin)
+    part.Material = self.material
+    part.Color = self.color
+    part.Anchored = true
+    part.CanCollide = self.canCollide
+    part.CanQuery = self.canQuery
+    part.CastShadow = true
+    tryEnableDoubleSided(part, "RoadMeshAccumulator")
+    part.CustomPhysicalProperties = self.physicsProps
+    if self.role then
+        part:SetAttribute("ArnisRoadSurfaceRole", self.role)
+    end
+    if self.kindBucket then
+        part:SetAttribute("ArnisRoadKind", self.kindBucket)
+    end
+    if self.subkindBucket then
+        part:SetAttribute("ArnisRoadSubkind", self.subkindBucket)
+    end
+    part:SetAttribute("ArnisRoadSourceCount", self.pendingSourceRoadCount)
+    if #self.pendingRoadIdOrder > 0 then
+        part:SetAttribute("ArnisRoadSourceIds", table.concat(self.pendingRoadIdOrder, "\n"))
+    end
+    if self.role == nil or self.role == "road" then
+        CollectionService:AddTag(part, "Road")
+    end
+    part.Parent = self.parent
+
+    self.vertices = {}
+    self.normals = {}
+    self.triangles = {}
+    self.pendingSourceRoadCount = 0
+    self.pendingRoadIds = {}
+    self.pendingRoadIdOrder = {}
+end
+
+-- MeshBuildAll: render road SURFACES as merged EditableMesh quads.
+-- Only ground-level, non-tunnel, non-step roads are merged.
+-- Bridges, tunnels, and steps fall back to per-part rendering.
+-- Decorations (centerlines, arrows, lights, crosswalks) are NOT included here;
+-- call MeshBuildDecorations in a separate pass.
+function RoadBuilder.MeshBuildAll(parent, roads, originStuds, chunk, preparedChunkPlan, maybeYield, buildOptions)
+    if not roads or #roads == 0 then
+        return {
+            accumulatorCount = 0,
+            meshPartCount = 0,
+            segmentCount = 0,
+            roadCount = 0,
+            vertexCount = 0,
+            triangleCount = 0,
+            meshCreateMs = 0,
+        }
+    end
+
+    local accumulators = {}
+    local stats = {
+        accumulatorCount = 0,
+        meshPartCount = 0,
+        segmentCount = 0,
+        roadCount = 0,
+        vertexCount = 0,
+        triangleCount = 0,
+        meshCreateMs = 0,
+        precomputedMeshCount = 0,
+        runtimeMeshCount = 0,
+    }
+
+    local meshCollisionPolicy = if type(buildOptions) == "table" then buildOptions.meshCollisionPolicy else nil
+
+    local function getAccumulator(material, color, physicsProps, role, kindBucket, subkindBucket)
+        material = resolvePlannedRoadMaterial(material)
+        color = resolvePlannedRoadColor(color)
+        -- Include physics identity in the key so roads with different grip
+        -- levels are not merged into the same MeshPart.
+        local key = tostring(role)
+            .. "_"
+            .. tostring(material)
+            .. "_"
+            .. tostring(color)
+            .. "_"
+            .. tostring(physicsProps)
+            .. "_"
+            .. tostring(kindBucket)
+            .. "_"
+            .. tostring(subkindBucket)
+        if not accumulators[key] then
+            local accumulator =
+                RoadMeshAccumulator.new(parent, key, material, color, physicsProps, role, kindBucket, subkindBucket)
+            if meshCollisionPolicy == "visual_only" then
+                accumulator.canCollide = false
+                accumulator.canQuery = false
+                accumulator.collisionFidelity = Enum.CollisionFidelity.Box
+            end
+            accumulators[key] = accumulator
+            stats.accumulatorCount += 1
+        end
+        return accumulators[key]
+    end
+
+    local chunkPlan = preparedChunkPlan or buildChunkPlan(roads, originStuds, chunk)
+
+    for _, roadPlan in ipairs(chunkPlan.roads) do
+        local road = roadPlan.road
+        if road.kind == "steps" or road.tunnel then
+            continue
+        end
+        stats.roadCount += 1
+
+        local roadMaterial = resolvePlannedRoadMaterial(roadPlan.material)
+        local roadPhysics = getPhysicsProperties(road)
+        local surfaceRole = getStandalonePedestrianSurfaceRole(road) or "road"
+        local kindBucket = road.kind or "unknown"
+        local roadSubkind = road.subkind
+        if (roadSubkind == nil or roadSubkind == "") and (surfaceRole == "sidewalk" or surfaceRole == "crossing") then
+            roadSubkind = surfaceRole
+        end
+        local roadAcc = getAccumulator(roadMaterial, roadPlan.color, roadPhysics, surfaceRole, kindBucket, roadSubkind)
+        roadAcc:registerRoadSource(road.id)
+        local sidewalkWidth = RoadProfile.getSidewalkWidth(road, roadPlan.width)
+        local edgeBuffer = RoadProfile.getEdgeBufferWidth(road, roadPlan.width)
+        local normalizedSidewalkMode = normalizeSidewalkMode(roadPlan.sidewalkMode)
+        local hasSidewalkLeft = (normalizedSidewalkMode == "both" or normalizedSidewalkMode == "left")
+            and sidewalkWidth > 0
+        local hasSidewalkRight = (normalizedSidewalkMode == "both" or normalizedSidewalkMode == "right")
+            and sidewalkWidth > 0
+        local sidewalkStripWidth = sidewalkWidth + edgeBuffer
+        local sidewalkAcc = nil
+        local curbAcc = nil
+        if hasSidewalkLeft or hasSidewalkRight then
+            local sidewalkMat = getSidewalkMaterial(road)
+            sidewalkAcc = getAccumulator(
+                sidewalkMat,
+                getMaterialColor(sidewalkMat),
+                CONCRETE_PHYSICS,
+                "sidewalk",
+                kindBucket,
+                "sidewalk"
+            )
+            curbAcc = getAccumulator(
+                Enum.Material.Concrete,
+                getMaterialColor(Enum.Material.Concrete),
+                CONCRETE_PHYSICS,
+                "curb",
+                kindBucket,
+                "curb"
+            )
+            sidewalkAcc:registerRoadSource(road.id)
+            curbAcc:registerRoadSource(road.id)
+        end
+        -- Fast path: load Rust pre-computed road mesh bundle if available.
+        -- The bundle contains surface + optional sidewalkLeft/Right + curbLeft/Right.
+        -- This replaces per-segment addRoadStrip for ground segments only;
+        -- bridges/tunnels still generate at runtime.
+        local roadMeshBundle = road.roadMesh
+        local hasSurface = roadMeshBundle
+            and roadMeshBundle.surface
+            and roadMeshBundle.surface.vertices
+            and #roadMeshBundle.surface.vertices >= 9
+        -- Legacy flat format: roadMesh has vertices directly (no .surface wrapper)
+        local hasLegacyMesh = not hasSurface
+            and roadMeshBundle
+            and roadMeshBundle.vertices
+            and #roadMeshBundle.vertices >= 9
+        local hasPrecomputedRoadMesh = hasSurface or hasLegacyMesh
+        if hasSurface then
+            roadAcc:addPrecomputedMesh(roadMeshBundle.surface, originStuds)
+            -- Load pre-computed sidewalk and curb meshes if present
+            if sidewalkAcc and roadMeshBundle.sidewalkLeft and roadMeshBundle.sidewalkLeft.vertices then
+                sidewalkAcc:addPrecomputedMesh(roadMeshBundle.sidewalkLeft, originStuds)
+            end
+            if sidewalkAcc and roadMeshBundle.sidewalkRight and roadMeshBundle.sidewalkRight.vertices then
+                sidewalkAcc:addPrecomputedMesh(roadMeshBundle.sidewalkRight, originStuds)
+            end
+            if curbAcc and roadMeshBundle.curbLeft and roadMeshBundle.curbLeft.vertices then
+                curbAcc:addPrecomputedMesh(roadMeshBundle.curbLeft, originStuds)
+            end
+            if curbAcc and roadMeshBundle.curbRight and roadMeshBundle.curbRight.vertices then
+                curbAcc:addPrecomputedMesh(roadMeshBundle.curbRight, originStuds)
+            end
+            stats.precomputedMeshCount += 1
+        elseif hasLegacyMesh then
+            roadAcc:addPrecomputedMesh(roadMeshBundle, originStuds)
+            stats.precomputedMeshCount += 1
+        else
+            stats.runtimeMeshCount += 1
+        end
+
+        for _, segment in ipairs(roadPlan.segments) do
+            stats.segmentCount += 1
+            if segment.mode == "bridge" then
+                paintBridgeSegment(
+                    parent,
+                    segment.p1,
+                    segment.p2,
+                    roadPlan.width,
+                    roadMaterial,
+                    roadPlan.chunk,
+                    roadPlan.sampleGroundY,
+                    road
+                )
+            elseif segment.mode == "ground" then
+                local surfaceLift = if surfaceRole == "road" then ROAD_SURFACE_LIFT else PAVEMENT_SURFACE_LIFT
+                if not hasPrecomputedRoadMesh then
+                    roadAcc:addRoadStrip(segment.p1, segment.p2, roadPlan.width, surfaceLift)
+                end
+                -- Sidewalks/curbs: use pre-computed if bundle had them, else runtime
+                local sidewalkPrecomputed = hasSurface
+                    and ((hasSidewalkLeft and roadMeshBundle.sidewalkLeft) or not hasSidewalkLeft)
+                    and ((hasSidewalkRight and roadMeshBundle.sidewalkRight) or not hasSidewalkRight)
+                if sidewalkAcc and curbAcc and not sidewalkPrecomputed then
+                    if hasSidewalkLeft then
+                        sidewalkAcc:addRoadStrip(
+                            segment.p1,
+                            segment.p2,
+                            sidewalkStripWidth,
+                            PAVEMENT_SURFACE_LIFT,
+                            -(roadPlan.width * 0.5 + sidewalkStripWidth * 0.5)
+                        )
+                        curbAcc:addRoadStrip(
+                            segment.p1,
+                            segment.p2,
+                            CURB_THICKNESS,
+                            CURB_SURFACE_LIFT,
+                            -(roadPlan.width * 0.5 + CURB_THICKNESS * 0.5)
+                        )
+                    end
+                    if hasSidewalkRight then
+                        sidewalkAcc:addRoadStrip(
+                            segment.p1,
+                            segment.p2,
+                            sidewalkStripWidth,
+                            PAVEMENT_SURFACE_LIFT,
+                            roadPlan.width * 0.5 + sidewalkStripWidth * 0.5
+                        )
+                        curbAcc:addRoadStrip(
+                            segment.p1,
+                            segment.p2,
+                            CURB_THICKNESS,
+                            CURB_SURFACE_LIFT,
+                            roadPlan.width * 0.5 + CURB_THICKNESS * 0.5
+                        )
+                    end
+                end
+            end
+        end
+    end
+
+    -- Commit all accumulated geometry to MeshParts.
+    for _, acc in pairs(accumulators) do
+        acc:flush()
+        stats.meshPartCount += acc.meshCount
+        stats.vertexCount += acc.totalVertexCount
+        stats.triangleCount += acc.totalTriangleCount
+        stats.meshCreateMs += acc.totalMeshCreateMs
+        if maybeYield then
+            maybeYield(false)
+        end
+    end
+
+    return stats
+end
+
+-- MeshBuildDecorations: per-road decoration pass for mesh mode.
+-- Renders steps, tunnels, centerlines, oneway arrows, street lights,
+-- and crosswalk markings.  Road surfaces are handled by MeshBuildAll.
+-- Detail items (arrows, lights, crosswalks) are placed in the grouped detail
+-- sub-folder consistent with the FallbackBuild pattern.
+function RoadBuilder.MeshBuildDecorations(parent, roads, originStuds, chunk, preparedChunkPlan)
+    if not roads or #roads == 0 then
+        return
+    end
+
+    local detailParent = getRoadDetailParent(parent)
+    local chunkPlan = preparedChunkPlan or buildChunkPlan(roads, originStuds, chunk)
+
+    for _, roadPlan in ipairs(chunkPlan.roads) do
+        local road = roadPlan.road
+        if road.kind == "steps" then
+            for segmentIndex, segment in ipairs(roadPlan.segments) do
+                paintSteps(parent, segment.p1, segment.p2, roadPlan.width, road, segmentIndex == 1 and 1 or 0)
+            end
+            continue
+        end
+
+        if road.tunnel then
+            for segmentIndex, segment in ipairs(roadPlan.segments) do
+                paintTunnelSegment(parent, segment.p1, segment.p2, roadPlan.width, road, segmentIndex == 1 and 1 or 0)
+            end
+            continue
+        end
+
+        for _, segment in ipairs(roadPlan.segments) do
+            if segment.mode == "ground" then
+                if shouldEmitRoadDecorations(road) then
+                    paintCenterline(detailParent, segment.p1, segment.p2, roadPlan.width)
+                    paintOnewayArrows(detailParent, segment.p1, segment.p2, roadPlan.width, road)
+                    paintLaneMarkings(detailParent, segment.p1, segment.p2, road)
+                    scatterManholes(detailParent, segment.p1, segment.p2, roadPlan.width, road)
+                    scatterDrainGrates(detailParent, segment.p1, segment.p2, roadPlan.width, roadPlan.sidewalkMode)
+                    if road.lit and WorldConfig.EnableStreetLighting ~= false then
+                        placeStreetLights(detailParent, segment.p1, segment.p2, roadPlan.width)
+                    end
+                end
+            end
+        end
+
+        if
+            shouldEmitRoadDecorations(road)
+            and roadPlan.width > 15
+            and roadPlan.firstEndpoint
+            and roadPlan.firstDirection
+        then
+            paintCrosswalk(detailParent, roadPlan.firstEndpoint, roadPlan.firstDirection, roadPlan.width)
+        end
+        if
+            shouldEmitRoadDecorations(road)
+            and roadPlan.width > 15
+            and roadPlan.lastEndpoint
+            and roadPlan.lastDirection
+        then
+            paintCrosswalk(detailParent, roadPlan.lastEndpoint, roadPlan.lastDirection, roadPlan.width)
+        end
+
+        -- Street name label at the road midpoint (once per road)
+        if #roadPlan.segments > 0 then
+            local midIdx = math.ceil(#roadPlan.segments / 2)
+            local midSeg = roadPlan.segments[midIdx]
+            local midpoint = (midSeg.p1 + midSeg.p2) * 0.5
+            emitStreetLabel(detailParent, road, midpoint)
+        end
+    end
+end
+
+return RoadBuilder
