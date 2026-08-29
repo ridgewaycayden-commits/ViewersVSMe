@@ -1,8 +1,9 @@
 -- AutoMovePause.client.lua
--- Pauses ONLY autonomous movement. Manual WASD remains available.
+-- Pauses autonomous movement while keeping MANUAL WASD + combat/camera available.
 -- P key or on-screen button toggles manual-control mode.
 
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
@@ -40,19 +41,22 @@ stroke.Transparency = .25
 stroke.Color = Color3.fromRGB(120,135,155)
 stroke.Parent = button
 
+local function characterParts()
+	local char = player.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	return hum
+end
+
 local function refresh()
-	button.Text = paused and "AUTO MOVE PAUSED [P]" or "PAUSE AUTO MOVE [P]"
+	button.Text = paused and "MANUAL CONTROL [P]" or "PAUSE AUTO MOVE [P]"
 	button.BackgroundColor3 = paused and Color3.fromRGB(115,38,42) or Color3.fromRGB(20,22,28)
 	player:SetAttribute("AutoMovePaused", paused)
 end
 
 local function toggle()
 	paused = not paused
-	local char = player.Character
-	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	local hum = characterParts()
 	if hum then
-		-- Restore a normal manual speed immediately. AutoCombat will choose its
-		-- own speed again when autonomous movement is resumed.
 		hum.WalkSpeed = 16
 		hum:Move(Vector3.zero, false)
 	end
@@ -65,13 +69,34 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	if input.KeyCode == Enum.KeyCode.P then toggle() end
 end)
 
+-- AutoCombat calls Humanoid:Move every frame. While paused, run AFTER it and
+-- replace that command with the player's keyboard input. No key = zero movement;
+-- WASD = normal manual movement. Jump remains manual too.
+RunService:BindToRenderStep("ManualMoveWhileAutoPaused", Enum.RenderPriority.Last.Value + 20, function()
+	if not paused then return end
+	local hum = characterParts()
+	if not hum or hum.Health <= 0 then return end
+
+	local x = 0
+	local z = 0
+	if UserInputService:IsKeyDown(Enum.KeyCode.W) then z -= 1 end
+	if UserInputService:IsKeyDown(Enum.KeyCode.S) then z += 1 end
+	if UserInputService:IsKeyDown(Enum.KeyCode.A) then x -= 1 end
+	if UserInputService:IsKeyDown(Enum.KeyCode.D) then x += 1 end
+
+	local move = Vector3.new(x,0,z)
+	if move.Magnitude > 1 then move = move.Unit end
+	hum.WalkSpeed = 16
+	hum:Move(move, true)
+	if UserInputService:IsKeyDown(Enum.KeyCode.Space) then hum.Jump = true end
+end)
+
 player.CharacterAdded:Connect(function()
 	task.wait(.2)
-	local char = player.Character
-	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	local hum = characterParts()
 	if hum and paused then hum.WalkSpeed = 16 end
 	refresh()
 end)
 
 refresh()
-print("AUTO MOVE PAUSE V3 READY - manual WASD remains enabled")
+print("AUTO MOVE PAUSE V4 READY - P toggles manual WASD control")
