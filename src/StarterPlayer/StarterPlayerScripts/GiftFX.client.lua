@@ -1,11 +1,10 @@
 -- GiftFX.client.lua
--- VIEWERS VS ME - cinematic gift announcements + test hotkeys.
+-- VIEWERS VS ME - cinematic gift announcements + first-person friendly test keys.
 
 local Players=game:GetService("Players")
 local ReplicatedStorage=game:GetService("ReplicatedStorage")
 local TweenService=game:GetService("TweenService")
 local UserInputService=game:GetService("UserInputService")
-local Lighting=game:GetService("Lighting")
 
 local player=Players.LocalPlayer
 local guiParent=player:WaitForChild("PlayerGui")
@@ -34,6 +33,12 @@ title.Position=UDim2.fromOffset(110,8);title.Size=UDim2.new(1,-120,0,36);title.B
 
 local sub=Instance.new("TextLabel")
 sub.Position=UDim2.fromOffset(112,45);sub.Size=UDim2.new(1,-120,0,26);sub.BackgroundTransparency=1;sub.Font=Enum.Font.GothamMedium;sub.TextXAlignment=Enum.TextXAlignment.Left;sub.TextScaled=true;sub.Text="";sub.TextColor3=Color3.fromRGB(210,218,232);sub.Parent=banner
+
+local help=Instance.new("TextLabel")
+help.AnchorPoint=Vector2.new(1,1);help.Position=UDim2.new(1,-16,1,-16);help.Size=UDim2.fromOffset(370,54);help.BackgroundColor3=Color3.fromRGB(10,12,18);help.BackgroundTransparency=.18;help.BorderSizePixel=0;help.TextColor3=Color3.fromRGB(225,232,245);help.Font=Enum.Font.GothamBold;help.TextSize=12;help.TextWrapped=true;help.Text="GIFT TESTS  Z Galaxy | X Shotgun | C Phoenix | V Horde | B Boss | N Universe | M Meteor";help.Parent=gui
+local hc=Instance.new("UICorner");hc.CornerRadius=UDim.new(0,10);hc.Parent=help
+
+task.delay(12,function() if help and help.Parent then TweenService:Create(help,TweenInfo.new(.5),{TextTransparency=.55,BackgroundTransparency=.65}):Play() end end)
 
 local token=0
 local function announce(data)
@@ -65,15 +70,15 @@ fxRemote.OnClientEvent:Connect(function(data)
 	elseif data.kind=="blackout" then screenFlash(Color3.fromRGB(90,40,130),.86,.7) end
 end)
 
--- Debug only. Lets us test the live gift behavior while first-person is mouse locked.
+-- Normal letter keys work even when first-person owns the mouse.
 local tests={
-	[Enum.KeyCode.F1]="Galaxy",
-	[Enum.KeyCode.F2]="Hand Hearts",
-	[Enum.KeyCode.F3]="Phoenix",
-	[Enum.KeyCode.F4]="Sports Car",
-	[Enum.KeyCode.F5]="Lion",
-	[Enum.KeyCode.F6]="TikTok Universe",
-	[Enum.KeyCode.F7]="Meteor Shower",
+	[Enum.KeyCode.Z]="Galaxy",
+	[Enum.KeyCode.X]="Hand Hearts",
+	[Enum.KeyCode.C]="Phoenix",
+	[Enum.KeyCode.V]="Sports Car",
+	[Enum.KeyCode.B]="Lion",
+	[Enum.KeyCode.N]="TikTok Universe",
+	[Enum.KeyCode.M]="Meteor Shower",
 }
 UserInputService.InputBegan:Connect(function(input,processed)
 	if processed then return end
@@ -81,4 +86,4 @@ UserInputService.InputBegan:Connect(function(input,processed)
 	if gift then debugRemote:FireServer(gift) end
 end)
 
-print("GIFT FX READY - F1/F2/F3 help, F4/F5/F6/F7 attack tests.")
+print("GIFT FX READY - Z/X/C help, V/B/N/M attack tests.")
