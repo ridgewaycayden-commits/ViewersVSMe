@@ -1,6 +1,6 @@
 -- AutoCombat.client.lua
--- VIEWERS VS ME - PLAYER AI V2.3
--- Autonomous FPS combat + obstacle avoidance + timed TikTok gift weapons.
+-- VIEWERS VS ME - PLAYER AI V2.4
+-- Autonomous FPS combat + obstacle avoidance + timed TikTok gift weapons + REAL line of sight.
 
 local Players=game:GetService("Players")
 local ReplicatedStorage=game:GetService("ReplicatedStorage")
@@ -45,6 +45,7 @@ local weaponRoot=nil
 local muzzlePart=nil
 
 local rayParams=RaycastParams.new();rayParams.FilterType=Enum.RaycastFilterType.Exclude;rayParams.IgnoreWater=true
+local losParams=RaycastParams.new();losParams.FilterType=Enum.RaycastFilterType.Exclude;losParams.IgnoreWater=true
 
 local function getCharacter()
 	local char=player.Character;if not char then return end
@@ -59,12 +60,37 @@ local function aliveEnemy(m)
 	return h and r and h.Health>0
 end
 
+local function targetPoint(m)
+	local head=m and m:FindFirstChild("Head")
+	local torso=m and (m:FindFirstChild("UpperTorso") or m:FindFirstChild("Torso"))
+	local root=m and m:FindFirstChild("HumanoidRootPart")
+	return (head and head.Position) or (torso and torso.Position) or (root and root.Position)
+end
+
+local function hasLineOfSight(m)
+	if not aliveEnemy(m) then return false end
+	local point=targetPoint(m);if not point then return false end
+	local origin=camera.CFrame.Position
+	local dir=point-origin
+	if dir.Magnitude<.1 then return true end
+	losParams.FilterDescendantsInstances={player.Character,camera}
+	local hit=workspace:Raycast(origin,dir,losParams)
+	return hit~=nil and hit.Instance~=nil and hit.Instance:IsDescendantOf(m)
+end
+
 local function nearestEnemy(root)
-	local best,bestD
+	local nearestAny,nearestAnyD
+	local nearestVisible,nearestVisibleD
 	for _,m in ipairs(enemies:GetChildren()) do
-		if aliveEnemy(m) then local er=m:FindFirstChild("HumanoidRootPart");local d=(er.Position-root.Position).Magnitude;if not bestD or d<bestD then best,bestD=m,d end end
+		if aliveEnemy(m) then
+			local er=m:FindFirstChild("HumanoidRootPart")
+			local d=(er.Position-root.Position).Magnitude
+			if not nearestAnyD or d<nearestAnyD then nearestAny,nearestAnyD=m,d end
+			if hasLineOfSight(m) and (not nearestVisibleD or d<nearestVisibleD) then nearestVisible,nearestVisibleD=m,d end
+		end
 	end
-	return best,bestD
+	if nearestVisible then return nearestVisible,nearestVisibleD,true end
+	return nearestAny,nearestAnyD,false
 end
 
 local function hideLocalCharacter(char)
@@ -100,7 +126,6 @@ local function makeWeaponModel(name)
 	local model=Instance.new("Model");model.Name="FPSViewModel";model.Parent=camera;viewModel=model
 	weaponRoot=newPart(model,"Root",Vector3.new(.05,.05,.05),Color3.new(),Enum.Material.SmoothPlastic,CFrame.new());weaponRoot.Transparency=1;model.PrimaryPart=weaponRoot;addArms(model)
 	local black=Color3.fromRGB(10,12,16);local dark=Color3.fromRGB(25,29,36);local steel=Color3.fromRGB(78,88,102);local light=Color3.fromRGB(132,142,158);local red=Color3.fromRGB(235,48,60);local cyan=Color3.fromRGB(65,210,255);local gold=Color3.fromRGB(230,175,55)
-
 	if name=="Sword" then
 		newPart(model,"Grip",Vector3.new(.25,.25,1.05),black,Enum.Material.SmoothPlastic,CFrame.new(.38,-.22,-.08)*CFrame.Angles(math.rad(90),0,0));newPart(model,"Guard",Vector3.new(1.15,.14,.24),steel,Enum.Material.Metal,CFrame.new(.38,.02,-.42));newPart(model,"Blade",Vector3.new(.10,.12,3.75),Color3.fromRGB(205,214,228),Enum.Material.Metal,CFrame.new(.38,.04,-2.35));newPart(model,"Edge",Vector3.new(.026,.135,3.55),cyan,Enum.Material.Neon,CFrame.new(.445,.04,-2.35));newPart(model,"Accent",Vector3.new(.026,.13,1.45),red,Enum.Material.Neon,CFrame.new(.315,.04,-1.85));return
 	elseif name=="Pistol" then
@@ -111,7 +136,7 @@ local function makeWeaponModel(name)
 		newPart(model,"Receiver",Vector3.new(.54,.56,1.38),dark,Enum.Material.Metal,CFrame.new(.08,-.02,-.55));newPart(model,"Stock",Vector3.new(.50,.58,1.45),Color3.fromRGB(72,46,31),Enum.Material.Wood,CFrame.new(.08,-.07,.92));newPart(model,"Barrel",Vector3.new(.17,.17,2.75),light,Enum.Material.Metal,CFrame.new(.08,.07,-2.45));newPart(model,"Tube",Vector3.new(.15,.15,2.35),dark,Enum.Material.Metal,CFrame.new(.08,-.19,-2.30));newPart(model,"Pump",Vector3.new(.49,.43,.92),Color3.fromRGB(94,60,38),Enum.Material.Wood,CFrame.new(.08,-.15,-1.62));newPart(model,"ShellAccent",Vector3.new(.025,.08,.85),Color3.fromRGB(255,90,45),Enum.Material.Neon,CFrame.new(.365,.18,-.48));muzzlePart=newPart(model,"Muzzle",Vector3.new(.11,.11,.11),Weapons.Shotgun.color,Enum.Material.Neon,CFrame.new(.08,.07,-3.87))
 	elseif name=="Minigun" then
 		newPart(model,"Housing",Vector3.new(.82,.78,1.55),dark,Enum.Material.Metal,CFrame.new(.05,-.04,-.65));newPart(model,"Rear",Vector3.new(.88,.84,.76),black,Enum.Material.Metal,CFrame.new(.05,-.04,.48));newPart(model,"Grip",Vector3.new(.31,.72,.29),black,Enum.Material.SmoothPlastic,CFrame.new(.05,-.68,-.25));local offs={{.20,.20},{-.20,.20},{.20,-.20},{-.20,-.20},{0,.28},{0,-.28}};for i,o in ipairs(offs) do newPart(model,"Barrel"..i,Vector3.new(.105,.105,2.55),light,Enum.Material.Metal,CFrame.new(.05+o[1],o[2]-0.02,-2.75)) end;newPart(model,"PowerGlow",Vector3.new(.03,.28,1.08),red,Enum.Material.Neon,CFrame.new(.48,-.02,-.62));muzzlePart=newPart(model,"Muzzle",Vector3.new(.12,.12,.12),Weapons.Minigun.color,Enum.Material.Neon,CFrame.new(.05,-.02,-4.06))
-	else -- Rifle
+	else
 		newPart(model,"Receiver",Vector3.new(.56,.58,1.58),dark,Enum.Material.Metal,CFrame.new(.05,-.02,-.15));newPart(model,"Upper",Vector3.new(.52,.28,1.95),steel,Enum.Material.Metal,CFrame.new(.05,.31,-.33));newPart(model,"Handguard",Vector3.new(.50,.48,1.95),Color3.fromRGB(38,43,52),Enum.Material.Metal,CFrame.new(.05,.02,-1.92));newPart(model,"Stock",Vector3.new(.52,.58,1.25),black,Enum.Material.SmoothPlastic,CFrame.new(.05,-.02,1.25));newPart(model,"Grip",Vector3.new(.32,.78,.36),black,Enum.Material.SmoothPlastic,CFrame.new(.05,-.62,.22)*CFrame.Angles(math.rad(-13),0,0));newPart(model,"Mag",Vector3.new(.38,.98,.48),black,Enum.Material.Metal,CFrame.new(.05,-.72,-.42)*CFrame.Angles(math.rad(-9),0,0));newPart(model,"Barrel",Vector3.new(.14,.14,1.72),light,Enum.Material.Metal,CFrame.new(.05,.01,-3.72));newPart(model,"MuzzleBrake",Vector3.new(.25,.25,.44),black,Enum.Material.Metal,CFrame.new(.05,.01,-4.77));newPart(model,"OpticMount",Vector3.new(.42,.11,.72),black,Enum.Material.Metal,CFrame.new(.05,.54,-.58));newPart(model,"OpticBody",Vector3.new(.50,.42,.66),black,Enum.Material.Metal,CFrame.new(.05,.73,-.58));newPart(model,"OpticLens",Vector3.new(.27,.25,.04),cyan,Enum.Material.Neon,CFrame.new(.05,.73,-.93));newPart(model,"SideAccent",Vector3.new(.025,.22,1.34),red,Enum.Material.Neon,CFrame.new(.342,.10,-.24));for i=0,6 do newPart(model,"Rail"..i,Vector3.new(.42,.055,.12),black,Enum.Material.Metal,CFrame.new(.05,.43,-.84-i*.27)) end;muzzlePart=newPart(model,"Muzzle",Vector3.new(.10,.10,.10),Weapons.Rifle.color,Enum.Material.Neon,CFrame.new(.05,.01,-5.02))
 	end
 	if muzzlePart then muzzlePart.Transparency=1 end
@@ -154,32 +179,39 @@ end
 
 local function shoot(target)
 	local cfg=Weapons[currentWeapon];if not cfg or os.clock()-lastShot<cfg.cooldown then return end
+	if not hasLineOfSight(target) then return end
 	local er=target and target:FindFirstChild("HumanoidRootPart");if not er then return end
 	lastShot=os.clock();recoil=math.min(.18,recoil+cfg.kick);muzzleFlash();local origin=camera.CFrame.Position+camera.CFrame.LookVector*1.2
 	for _=1,cfg.pellets do local aim=er.Position+Vector3.new((rng:NextNumber()-.5)*cfg.spread,1+(rng:NextNumber()-.5)*cfg.spread*.25,(rng:NextNumber()-.5)*cfg.spread);tracer(origin,aim,cfg.color) end
 	attackRemote:FireServer(target,currentWeapon)
 end
-local function sword(target) if os.clock()-lastSword<Weapons.Sword.cooldown then return end;lastSword=os.clock();recoil=.11;attackRemote:FireServer(target,"Sword") end
+local function sword(target) if os.clock()-lastSword<Weapons.Sword.cooldown or not hasLineOfSight(target) then return end;lastSword=os.clock();recoil=.11;attackRemote:FireServer(target,"Sword") end
 
 player.CameraMode=Enum.CameraMode.LockFirstPerson
 
 RunService.RenderStepped:Connect(function(dt)
 	local char,hum,root,head=getCharacter();if not char then return end
 	hideLocalCharacter(char)
-	local target,dist=nearestEnemy(root);currentTarget=target;local desiredMove=Vector3.zero
+	local target,dist,visible=nearestEnemy(root);currentTarget=target;local desiredMove=Vector3.zero
 
 	if target and aliveEnemy(target) then
 		local er=target:FindFirstChild("HumanoidRootPart")
 		if er then
-			local predicted=er.Position+er.AssemblyLinearVelocity*.15+Vector3.new(0,1.25,0);aimPoint=aimPoint and aimPoint:Lerp(predicted,math.clamp(dt*5.5,0,1)) or predicted
 			local flatTo=Vector3.new(er.Position.X-root.Position.X,0,er.Position.Z-root.Position.Z)
-			if os.clock()>nextStrafeFlip then strafeSign*=-1;nextStrafeFlip=os.clock()+rng:NextNumber(1.0,2.4) end
-			local right=flatTo.Magnitude>0 and Vector3.new(-flatTo.Z,0,flatTo.X).Unit or Vector3.xAxis
-			if dist>31 then desiredMove=flatTo.Unit elseif dist<10 then desiredMove=(-flatTo.Unit+right*.35*strafeSign).Unit else desiredMove=(right*strafeSign+flatTo.Unit*.12).Unit end
-			desiredMove=steerAround(root,desiredMove)
-			if obstacleAhead(root,desiredMove,8) then desiredMove=steerAround(root,pathDirection(root,root.Position+desiredMove*14)) end
-			hum.WalkSpeed=20;hum:Move(desiredMove,false)
-			if dist<=8.5 then currentWeapon="Sword";sword(target) else currentWeapon=giftGun();shoot(target) end
+			if visible then
+				local predicted=er.Position+er.AssemblyLinearVelocity*.15+Vector3.new(0,1.25,0);aimPoint=aimPoint and aimPoint:Lerp(predicted,math.clamp(dt*5.5,0,1)) or predicted
+				if os.clock()>nextStrafeFlip then strafeSign*=-1;nextStrafeFlip=os.clock()+rng:NextNumber(1.0,2.4) end
+				local right=flatTo.Magnitude>0 and Vector3.new(-flatTo.Z,0,flatTo.X).Unit or Vector3.xAxis
+				if dist>31 then desiredMove=flatTo.Unit elseif dist<10 then desiredMove=(-flatTo.Unit+right*.35*strafeSign).Unit else desiredMove=(right*strafeSign+flatTo.Unit*.12).Unit end
+				desiredMove=steerAround(root,desiredMove)
+				if obstacleAhead(root,desiredMove,8) then desiredMove=steerAround(root,pathDirection(root,root.Position+desiredMove*14)) end
+				hum.WalkSpeed=20;hum:Move(desiredMove,false)
+				if dist<=8.5 then currentWeapon="Sword";sword(target) else currentWeapon=giftGun();shoot(target) end
+			else
+				-- Enemy exists but is behind a wall: put the gun down, path around, DO NOT shoot/aim-lock through geometry.
+				aimPoint=nil;currentWeapon=giftGun();nextPathRefresh=math.min(nextPathRefresh,os.clock()+.1)
+				desiredMove=steerAround(root,pathDirection(root,er.Position));hum.WalkSpeed=19;hum:Move(desiredMove,false)
+			end
 		end
 	else
 		currentWeapon=giftGun();aimPoint=nil
@@ -192,10 +224,10 @@ RunService.RenderStepped:Connect(function(dt)
 		lastMoveSample=os.clock();if lastMovePos then local moved=(root.Position-lastMovePos).Magnitude;if desiredMove.Magnitude>.2 and moved<.16 then stuckFor+=.20 else stuckFor=math.max(0,stuckFor-.25) end;if stuckFor>.85 then hum.Jump=true;strafeSign*=-1;roamGoal=nil;pathWaypoints=nil;nextPathRefresh=0;stuckFor=0 end end;lastMovePos=root.Position
 	end
 
-	local lookTarget=aimPoint or (root.Position+root.CFrame.LookVector*30+Vector3.new(0,1.4,0));local camPos=head.Position+Vector3.new(0,.15,0);local desiredCam=CFrame.lookAt(camPos,lookTarget);camera.CFrame=camera.CFrame:Lerp(desiredCam,math.clamp(dt*(aimPoint and 5.2 or 3.2),0,1));root.CFrame=root.CFrame:Lerp(CFrame.lookAt(root.Position,Vector3.new(camera.CFrame.LookVector.X+root.Position.X,root.Position.Y,camera.CFrame.LookVector.Z+root.Position.Z)),math.clamp(dt*5,0,1))
+	local lookTarget=aimPoint or (root.Position+(desiredMove.Magnitude>.1 and desiredMove or root.CFrame.LookVector)*30+Vector3.new(0,1.4,0));local camPos=head.Position+Vector3.new(0,.15,0);local desiredCam=CFrame.lookAt(camPos,lookTarget);camera.CFrame=camera.CFrame:Lerp(desiredCam,math.clamp(dt*(aimPoint and 5.2 or 3.2),0,1));root.CFrame=root.CFrame:Lerp(CFrame.lookAt(root.Position,Vector3.new(camera.CFrame.LookVector.X+root.Position.X,root.Position.Y,camera.CFrame.LookVector.Z+root.Position.Z)),math.clamp(dt*5,0,1))
 	bobTime+=dt*(hum.MoveDirection.Magnitude>.1 and 8.5 or 2);recoil*=math.max(0,1-dt*10)
 	if viewModel and weaponRoot then local bobX=math.sin(bobTime)*.018*hum.MoveDirection.Magnitude;local bobY=math.abs(math.cos(bobTime))*-.022*hum.MoveDirection.Magnitude;viewModel:PivotTo(camera.CFrame*CFrame.new(.46+bobX,-.62+bobY,-1.25+recoil)*CFrame.Angles(math.rad(-4-recoil*50),math.rad(-2),math.rad(-1))) end
 end)
 
 player.CharacterAdded:Connect(function() task.wait(.5);clearViewModel();roamGoal=nil;pathWaypoints=nil;aimPoint=nil end)
-print("PLAYER AI V2.3 READY - gift weapons + distinct viewmodels enabled.")
+print("PLAYER AI V2.4 READY - line of sight combat enabled. No wall shooting.")
