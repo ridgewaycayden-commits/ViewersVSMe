@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "ViewersVSMe",
   "tree": {
     "$className": "DataModel",
@@ -10,7 +10,9 @@
     "ServerStorage": {
       "$className": "ServerStorage",
       "$ignoreUnknownInstances": true,
-      "$path": "src/ServerStorage"
+      "RealMidtownCompact": {
+        "$path": "src/ServerStorage/RealMidtownCompact.lua"
+      }
     },
     "ServerScriptService": {
       "$className": "ServerScriptService",
