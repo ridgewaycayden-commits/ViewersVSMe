@@ -28,22 +28,53 @@ jobs:
       - name: Compile real Midtown Manhattan from live OpenStreetMap
         shell: bash
         run: |
+          set +e
           mkdir -p generated
           cd arnis-roblox/rust
-          cargo run --release --bin arbx_cli -- compile \
-            --live \
-            --bbox 40.7520,-73.9900,40.7605,-73.9795 \
-            --profile balanced \
-            --out "$GITHUB_WORKSPACE/generated/midtown-manhattan.json"
+
+          # Arnis currently panics on a handful of very complex/self-intersecting
+          # Manhattan OSM polygons. Try the larger Midtown slice first, then
+          # progressively tighter real NYC slices until one compiles cleanly.
+          BBOXES=(
+            "40.7520,-73.9900,40.7605,-73.9795"
+            "40.7535,-73.9890,40.7595,-73.9820"
+            "40.7545,-73.9880,40.7588,-73.9830"
+            "40.7560,-73.9870,40.7582,-73.9840"
+          )
+
+          SUCCESS=0
+          for BBOX in "${BBOXES[@]}"; do
+            echo "Trying real Manhattan bbox: $BBOX"
+            rm -f "$GITHUB_WORKSPACE/generated/midtown-manhattan.json"
+            cargo run --release --bin arbx_cli -- compile \
+              --live \
+              --bbox "$BBOX" \
+              --profile balanced \
+              --out "$GITHUB_WORKSPACE/generated/midtown-manhattan.json"
+            CODE=$?
+            if [ $CODE -eq 0 ] && [ -s "$GITHUB_WORKSPACE/generated/midtown-manhattan.json" ]; then
+              echo "$BBOX" > "$GITHUB_WORKSPACE/generated/midtown-manhattan-bbox.txt"
+              SUCCESS=1
+              break
+            fi
+            echo "Arnis failed on $BBOX with exit code $CODE; retrying a tighter Midtown slice."
+          done
+
+          if [ $SUCCESS -ne 1 ]; then
+            echo "All Midtown fallback boxes failed in Arnis."
+            exit 1
+          fi
 
       - name: Record source metadata
         shell: bash
         run: |
-          cat > generated/midtown-manhattan-source.txt <<'EOF'
+          BBOX="$(cat generated/midtown-manhattan-bbox.txt)"
+          cat > generated/midtown-manhattan-source.txt <<EOF
           SOURCE: OpenStreetMap / Overpass via adpena/arnis-roblox
-          BBOX: 40.7520,-73.9900,40.7605,-73.9795
+          BBOX: $BBOX
           PROFILE: balanced
           PURPOSE: Real Midtown Manhattan geometry for ViewersVsMe
+          NOTE: Workflow uses progressively tighter Midtown boxes when Arnis encounters invalid/complex polygon triangulation.
           EOF
 
       - name: Commit generated Manhattan manifest
@@ -51,7 +82,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add generated/midtown-manhattan.json generated/midtown-manhattan-source.txt
+          git add generated/midtown-manhattan.json generated/midtown-manhattan-source.txt generated/midtown-manhattan-bbox.txt
           if git diff --cached --quiet; then
             echo "No manifest changes to commit"
           else
