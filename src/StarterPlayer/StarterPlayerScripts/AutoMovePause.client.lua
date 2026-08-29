@@ -1,5 +1,5 @@
 -- AutoMovePause.client.lua
--- Lets the host pause/resume autonomous movement without disabling combat.
+-- Hard pause/resume for autonomous movement while leaving combat/camera active.
 -- P key or on-screen button toggles the movement lock.
 
 local Players = game:GetService("Players")
@@ -8,6 +8,7 @@ local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
 local paused = false
+local lockedPosition = nil
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "AutoMoveControls"
@@ -41,6 +42,29 @@ stroke.Transparency = .25
 stroke.Color = Color3.fromRGB(120,135,155)
 stroke.Parent = button
 
+local function characterParts()
+	local char = player.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	return hum, root
+end
+
+local function applyHardPause()
+	local hum, root = characterParts()
+	if not hum or not root then return end
+	if not lockedPosition then lockedPosition = root.Position end
+	hum:Move(Vector3.zero, false)
+	hum.WalkSpeed = 0
+	hum.Jump = false
+	root.AssemblyLinearVelocity = Vector3.zero
+	root.AssemblyAngularVelocity = Vector3.zero
+	-- Preserve whatever facing AutoCombat/camera wants, but force XYZ back to the pause point.
+	local look = root.CFrame.LookVector
+	local flat = Vector3.new(look.X,0,look.Z)
+	if flat.Magnitude < .01 then flat = Vector3.new(0,0,-1) else flat = flat.Unit end
+	root.CFrame = CFrame.lookAt(lockedPosition, lockedPosition + flat)
+end
+
 local function refresh()
 	button.Text = paused and "RESUME AUTO MOVE [P]" or "PAUSE AUTO MOVE [P]"
 	button.BackgroundColor3 = paused and Color3.fromRGB(115,38,42) or Color3.fromRGB(20,22,28)
@@ -49,12 +73,15 @@ end
 
 local function toggle()
 	paused = not paused
-	refresh()
+	local hum, root = characterParts()
 	if paused then
-		local char = player.Character
-		local hum = char and char:FindFirstChildOfClass("Humanoid")
-		if hum then hum:Move(Vector3.zero, false) end
+		lockedPosition = root and root.Position or nil
+		applyHardPause()
+	else
+		lockedPosition = nil
+		if hum then hum.WalkSpeed = 16 end
 	end
+	refresh()
 end
 
 button.Activated:Connect(toggle)
@@ -63,21 +90,22 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	if input.KeyCode == Enum.KeyCode.P then toggle() end
 end)
 
--- Run after the normal AutoCombat RenderStepped connection so its Move() command
--- is overridden only while paused. Shooting/targeting can continue normally.
-RunService:BindToRenderStep("AutoMovePauseOverride", Enum.RenderPriority.Last.Value, function()
-	if not paused then return end
-	local char = player.Character
-	local hum = char and char:FindFirstChildOfClass("Humanoid")
-	if hum and hum.Health > 0 then
-		hum:Move(Vector3.zero, false)
-	end
+-- AutoCombat issues Humanoid:Move every frame. Run after it and hard-lock the
+-- root position so no pathing/strafe/roam command can physically move the player.
+RunService:BindToRenderStep("AutoMovePauseOverride", Enum.RenderPriority.Last.Value + 10, function()
+	if paused then applyHardPause() end
 end)
 
 player.CharacterAdded:Connect(function()
-	task.wait(.2)
+	lockedPosition = nil
+	task.wait(.25)
+	if paused then
+		local _, root = characterParts()
+		lockedPosition = root and root.Position or nil
+		applyHardPause()
+	end
 	refresh()
 end)
 
 refresh()
-print("AUTO MOVE PAUSE READY - press P or use the button")
+print("AUTO MOVE PAUSE V2 READY - hard position lock")
