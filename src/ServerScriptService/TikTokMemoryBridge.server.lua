@@ -1,15 +1,17 @@
 -- TikTokMemoryBridge.server.lua
--- VIEWERS VS ME - LIVE TIKTOK MEMORYSTORE BRIDGE V1
--- Reads Open Cloud/TikTok bridge events from TikTokLiveEventsV1 and forwards gifts
--- into the existing ServerStorage.ViewersVsMeGiftDispatch BindableEvent.
+-- VIEWERS VS ME - LIVE TIKTOK MEMORYSTORE BRIDGE V1.1
+-- Studio-safe bridge: published servers poll TikTokLiveEventsV1 automatically.
+-- Studio stays quiet unless this script's EnableInStudio attribute is set true.
 
 local MemoryStoreService=game:GetService("MemoryStoreService")
 local ServerStorage=game:GetService("ServerStorage")
 local ReplicatedStorage=game:GetService("ReplicatedStorage")
 local HttpService=game:GetService("HttpService")
+local RunService=game:GetService("RunService")
 
 local QUEUE_NAME="TikTokLiveEventsV1"
-local queue=MemoryStoreService:GetQueue(QUEUE_NAME,20)
+local ENABLE_IN_STUDIO=script:GetAttribute("EnableInStudio")==true
+
 local dispatch=ServerStorage:WaitForChild("ViewersVsMeGiftDispatch")
 local streamRemote=ReplicatedStorage:FindFirstChild("TikTokStreamEvent")
 
@@ -33,7 +35,6 @@ local function normalized(raw)
 	local count=tonumber(pick(raw,"count","repeatCount","repeat_count","quantity","amount")) or 1
 	count=math.clamp(math.floor(count),1,50)
 
-	-- Some bridge payloads wrap the event data one level deeper.
 	if type(raw.data)=="table" then
 		local d=raw.data
 		eventType=tostring(pick(d,"type","event","eventType","kind") or eventType):lower()
@@ -58,14 +59,20 @@ local function process(raw)
 		return true
 	end
 
-	-- Non-gift TikTok events can still reach the HUD/other systems without being
-	-- incorrectly treated as gifts. This leaves room for likes/follows later.
 	if streamRemote then streamRemote:FireAllClients(e.raw) end
 	print("TIKTOK LIVE EVENT:",e.eventType,"from",e.sender)
 	return true
 end
 
-print("TIKTOK MEMORY BRIDGE V1 READY - queue:",QUEUE_NAME)
+if RunService:IsStudio() and not ENABLE_IN_STUDIO then
+	print("TIKTOK MEMORY BRIDGE V1.1 STANDBY - Studio polling disabled. Published servers will connect automatically.")
+	return
+end
+
+local queue=MemoryStoreService:GetQueue(QUEUE_NAME,20)
+print("TIKTOK MEMORY BRIDGE V1.1 READY - queue:",QUEUE_NAME)
+
+local missingQueueNotice=false
 
 task.spawn(function()
 	local consecutiveErrors=0
@@ -75,27 +82,41 @@ task.spawn(function()
 		end)
 
 		if not ok then
-			consecutiveErrors+=1
-			warn("TIKTOK BRIDGE queue read failed:",items)
-			task.wait(math.min(8,1+consecutiveErrors))
+			local err=tostring(items)
+			if string.find(err,"UnknownMemoryStoreQueue",1,true) then
+				if not missingQueueNotice then
+					missingQueueNotice=true
+					print("TIKTOK BRIDGE WAITING - queue has not been created by the external TikTok bridge yet.")
+				end
+				consecutiveErrors=0
+				task.wait(3)
+			else
+				consecutiveErrors+=1
+				warn("TIKTOK BRIDGE queue read failed:",err)
+				task.wait(math.min(8,1+consecutiveErrors))
+			end
 		elseif items and #items>0 then
+			missingQueueNotice=false
 			consecutiveErrors=0
 			local processedAll=true
 			for _,item in ipairs(items) do
 				local worked=false
 				local success,processErr=pcall(function() worked=process(item) end)
-				if not success then warn("TIKTOK BRIDGE event processing error:",processErr);processedAll=false
-				elseif not worked then warn("TIKTOK BRIDGE event skipped") end
+				if not success then
+					warn("TIKTOK BRIDGE event processing error:",processErr)
+					processedAll=false
+				elseif not worked then
+					warn("TIKTOK BRIDGE event skipped")
+				end
 			end
-			-- Remove the batch only after processing attempts. If processing actually throws,
-			-- leave it invisible until timeout so it can retry instead of silently disappearing.
 			if processedAll and id then
 				local removed,removeErr=pcall(function() queue:RemoveAsync(id) end)
 				if not removed then warn("TIKTOK BRIDGE queue remove failed:",removeErr) end
 			end
 		else
+			missingQueueNotice=false
 			consecutiveErrors=0
-			task.wait(.15)
+			task.wait(.2)
 		end
 	end
 end)
