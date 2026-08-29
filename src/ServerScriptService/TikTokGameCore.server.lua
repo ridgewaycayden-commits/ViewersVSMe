@@ -1,6 +1,7 @@
 -- TikTokGameCore.server.lua
--- VIEWERS VS ME - ZOMBIE CORE V3.1
--- Smooth whole-rig ground emergence, outdoor-only spawning, and reliable gift boss/horde requests.
+-- VIEWERS VS ME - ZOMBIE CORE V3.2
+-- Smooth whole-rig ground emergence, outdoor-only spawning, reliable gift boss/horde requests,
+-- and non-through-wall viewer nameplates.
 
 local Players=game:GetService("Players")
 local ReplicatedStorage=game:GetService("ReplicatedStorage")
@@ -58,14 +59,10 @@ end
 
 local function openOutdoorSpot(pos,groundPart)
 	overlapParams.FilterDescendantsInstances={enemies,hostCharacter(),groundPart}
-	-- Reject anything occupying body space: walls, cars, props, interiors, etc.
 	local bodyParts=workspace:GetPartBoundsInBox(CFrame.new(pos+Vector3.new(0,3.2,0)),Vector3.new(5.4,6.4,5.4),overlapParams)
 	for _,p in ipairs(bodyParts) do
-		if p:IsA("BasePart") and p.CanCollide and p.Transparency<.95 then
-			return false
-		end
+		if p:IsA("BasePart") and p.CanCollide and p.Transparency<.95 then return false end
 	end
-	-- Need sky/open vertical room above the emergence point.
 	rayParams.FilterDescendantsInstances={enemies,hostCharacter(),groundPart}
 	local roof=workspace:Raycast(pos+Vector3.new(0,1.5,0),Vector3.new(0,18,0),rayParams)
 	if roof and roof.Instance and roof.Instance.CanCollide then return false end
@@ -75,28 +72,22 @@ end
 local ROAD_LINES={-200,-100,0,100,200}
 local function roadCandidatesAround(rootPos)
 	local choices={}
-	-- The V6/V7 city has broad roads centered on these grid lines. Spawn on those lanes first.
 	for _,x in ipairs(ROAD_LINES) do
 		for _,z in ipairs(ROAD_LINES) do
-			-- intersections
 			table.insert(choices,Vector3.new(x,rootPos.Y,z))
-			-- road stretches between intersections
 			for _,off in ipairs({-38,38}) do
 				table.insert(choices,Vector3.new(x,rootPos.Y,z+off))
 				table.insert(choices,Vector3.new(x+off,rootPos.Y,z))
 			end
 		end
 	end
-	for i=#choices,2,-1 do
-		local j=rng:NextInteger(1,i);choices[i],choices[j]=choices[j],choices[i]
-	end
+	for i=#choices,2,-1 do local j=rng:NextInteger(1,i);choices[i],choices[j]=choices[j],choices[i] end
 	return choices
 end
 
 local function chooseSpawnPoint()
 	local char=hostCharacter();local root=char and char:FindFirstChild("HumanoidRootPart")
 	local origin=root and root.Position or Vector3.zero
-	-- Prefer known road/plaza positions that are 24-95 studs away.
 	for _,raw in ipairs(roadCandidatesAround(origin)) do
 		local flat=Vector3.new(raw.X-origin.X,0,raw.Z-origin.Z).Magnitude
 		if flat>=24 and flat<=95 then
@@ -104,14 +95,12 @@ local function chooseSpawnPoint()
 			if ground and openOutdoorSpot(ground,part) then return ground end
 		end
 	end
-	-- Fallback: ring sampling, but still require clearance + no roof.
 	for _=1,50 do
 		local a=rng:NextNumber(0,math.pi*2);local radius=rng:NextNumber(28,58)
 		local raw=origin+Vector3.new(math.cos(a)*radius,0,math.sin(a)*radius)
 		local ground,part=groundAt(raw)
 		if ground and openOutdoorSpot(ground,part) then return ground end
 	end
-	-- Central plaza fallback is intentionally open in the city overhaul.
 	local ground=select(1,groundAt(Vector3.new(0,origin.Y,0)))
 	return ground or origin+Vector3.new(0,0,-32)
 end
@@ -151,15 +140,22 @@ local function styleZombie(model,boss)
 		weldedDetail(model,head,"FaceDecay",Vector3.new(.25,.08,.04),CFrame.new(.10,-.16,-.50)*CFrame.Angles(0,0,math.rad(-18)),Color3.fromRGB(72,27,25))
 	end
 	local torso=model:FindFirstChild("UpperTorso") or model:FindFirstChild("Torso")
-	if torso then
-		weldedDetail(model,torso,"ChestDecay",Vector3.new(.60,.11,.05),CFrame.new(.18,.04,-.52)*CFrame.Angles(0,0,math.rad(22)),Color3.fromRGB(67,27,25))
-	end
+	if torso then weldedDetail(model,torso,"ChestDecay",Vector3.new(.60,.11,.05),CFrame.new(.18,.04,-.52)*CFrame.Angles(0,0,math.rad(22)),Color3.fromRGB(67,27,25)) end
 end
 
 local function addName(model,name,boss)
 	local head=model:FindFirstChild("Head");if not head then return end
-	local gui=Instance.new("BillboardGui");gui.Name="ViewerTag";gui.Size=UDim2.fromOffset(boss and 220 or 170,32);gui.StudsOffset=Vector3.new(0,3.1,0);gui.AlwaysOnTop=true;gui.Parent=head
-	local lbl=Instance.new("TextLabel");lbl.Size=UDim2.fromScale(1,1);lbl.BackgroundTransparency=1;lbl.Font=Enum.Font.GothamBlack;lbl.TextScaled=true;lbl.TextStrokeTransparency=.2;lbl.TextColor3=boss and Color3.fromRGB(255,75,60) or Color3.new(1,1,1);lbl.Text=boss and ("BOSS • @"..name) or ("@"..name);lbl.Parent=gui
+	local gui=Instance.new("BillboardGui")
+	gui.Name="ViewerTag"
+	gui.Size=UDim2.fromOffset(boss and 220 or 170,32)
+	gui.StudsOffset=Vector3.new(0,3.1,0)
+	gui.AlwaysOnTop=false
+	gui.MaxDistance=boss and 140 or 95
+	gui.LightInfluence=0
+	gui.Parent=head
+	local lbl=Instance.new("TextLabel")
+	lbl.Size=UDim2.fromScale(1,1);lbl.BackgroundTransparency=1;lbl.Font=Enum.Font.GothamBlack;lbl.TextScaled=true;lbl.TextStrokeTransparency=.2
+	lbl.TextColor3=boss and Color3.fromRGB(255,75,60) or Color3.new(1,1,1);lbl.Text=boss and ("BOSS • @"..name) or ("@"..name);lbl.Parent=gui
 end
 
 local function addWalk(hum)
@@ -180,15 +176,11 @@ local function emergeFromGround(model,groundPos)
 	local hum=model:FindFirstChildOfClass("Humanoid");local root=model:FindFirstChild("HumanoidRootPart");if not hum or not root then return end
 	local target=CFrame.new(groundPos+Vector3.new(0,3.05,0))*CFrame.Angles(0,rng:NextNumber(-math.pi,math.pi),0)
 	local start=target*CFrame.new(0,-5.4,0)*CFrame.Angles(math.rad(13),0,math.rad(rng:NextNumber(-5,5)))
-	model:PivotTo(start)
-	hum.WalkSpeed=0;hum.AutoRotate=false
+	model:PivotTo(start);hum.WalkSpeed=0;hum.AutoRotate=false
 	local saved={}
-	for _,bp in ipairs(model:GetDescendants()) do
-		if bp:IsA("BasePart") then saved[bp]=bp.CanCollide;bp.CanCollide=false end
-	end
+	for _,bp in ipairs(model:GetDescendants()) do if bp:IsA("BasePart") then saved[bp]=bp.CanCollide;bp.CanCollide=false end end
 	local dirt=Instance.new("Part");dirt.Name="SpawnDirt";dirt.Anchored=true;dirt.CanCollide=false;dirt.CanTouch=false;dirt.CanQuery=false;dirt.Material=Enum.Material.Ground;dirt.Color=Color3.fromRGB(67,53,40);dirt.Size=Vector3.new(5.5,.16,5.5);dirt.CFrame=CFrame.new(groundPos+Vector3.new(0,.06,0));dirt.Parent=workspace
 	local smoke=Instance.new("ParticleEmitter");smoke.Texture="rbxasset://textures/particles/smoke_main.dds";smoke.Rate=0;smoke.Lifetime=NumberRange.new(.45,.85);smoke.Speed=NumberRange.new(2.5,6);smoke.SpreadAngle=Vector2.new(180,180);smoke.Color=ColorSequence.new(Color3.fromRGB(95,77,57));smoke.Parent=dirt;smoke:Emit(28)
-	-- Tween a CFrameValue and PivotTo the WHOLE model every update, so limbs never stretch away from the root.
 	local driver=Instance.new("CFrameValue");driver.Value=start
 	local conn=driver:GetPropertyChangedSignal("Value"):Connect(function() if model.Parent then model:PivotTo(driver.Value) end end)
 	local tw=TweenService:Create(driver,TweenInfo.new(1.15,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),{Value=target})
@@ -213,10 +205,7 @@ local function startChase(model)
 					if ok and path.Status==Enum.PathStatus.Success then waypoints=path:GetWaypoints();idx=2 else waypoints=nil end
 				end
 				local goal=tr.Position
-				if waypoints and waypoints[idx] then
-					local wp=waypoints[idx];if (root.Position-wp.Position).Magnitude<3 then idx+=1;wp=waypoints[idx] end
-					if wp then goal=wp.Position;if wp.Action==Enum.PathWaypointAction.Jump then hum.Jump=true end end
-				end
+				if waypoints and waypoints[idx] then local wp=waypoints[idx];if (root.Position-wp.Position).Magnitude<3 then idx+=1;wp=waypoints[idx] end;if wp then goal=wp.Position;if wp.Action==Enum.PathWaypointAction.Jump then hum.Jump=true end end end
 				hum:MoveTo(goal)
 				local moved=(root.Position-lastPos).Magnitude;if moved<.2 and dist>6 then stuck+=.12 else stuck=0 end;lastPos=root.Position
 				if stuck>1.0 then hum.Jump=true;waypoints=nil;idx=2;hum:MoveTo(root.Position+Vector3.new(rng:NextNumber(-7,7),0,rng:NextNumber(-7,7)));stuck=0 end
@@ -229,65 +218,56 @@ end
 
 local function spawnZombie(sender,boss,forcedPos)
 	local desc=Instance.new("HumanoidDescription")
-	desc.BodyTypeScale=0;desc.ProportionScale=0;desc.HeightScale=boss and 1.23 or rng:NextNumber(.94,1.08);desc.WidthScale=boss and 1.16 or rng:NextNumber(.92,1.08);desc.DepthScale=boss and 1.10 or 1;desc.HeadScale=boss and 1.08 or rng:NextNumber(.95,1.05)
+	desc.BodyTypeScale=0;desc.ProportionScale=0;desc.HeightScale=boss and 1.23 or rng:NextNumber(.94,1.08);desc.WidthScale=boss and 1.16 or rng:NextNumber(.92,1.08);desc.DepthScale=boss and 1.10 or 1;desc.HeadScale=boss and 1.08 or 1
 	local ok,model=pcall(function() return Players:CreateHumanoidModelFromDescriptionAsync(desc,Enum.HumanoidRigType.R15) end)
-	if not ok or not model then warn("Zombie rig failed",model);return end
-	model.Name=boss and ("Boss_"..sender) or ("Zombie_"..sender);model:SetAttribute("TikTokEnemy",true);model:SetAttribute("Boss",boss==true);model:SetAttribute("Dead",false);model.Parent=enemies
-	local hum=model:FindFirstChildOfClass("Humanoid");local root=model:FindFirstChild("HumanoidRootPart");if not hum or not root then model:Destroy();return end
-	styleZombie(model,boss);addName(model,sender,boss);addWalk(hum)
-	hum.MaxHealth=boss and 850 or rng:NextInteger(110,145);hum.Health=hum.MaxHealth;hum.JumpPower=34;hum.AutoRotate=true;hum.PlatformStand=false;hum.Sit=false;hum.DisplayDistanceType=Enum.HumanoidDisplayDistanceType.None
-	local spawnPos=forcedPos or chooseSpawnPoint();model:PivotTo(CFrame.new(spawnPos+Vector3.new(0,3,0)))
-	pcall(function() root:SetNetworkOwner(nil) end)
+	if not ok or not model then warn("ZOMBIE CREATE FAILED",model);return end
+	model.Name=(boss and "Boss_" or "Zombie_")..tostring(sender)
+	model:SetAttribute("Boss",boss==true);model:SetAttribute("Dead",false)
+	model.Parent=enemies
+	local hum=model:FindFirstChildOfClass("Humanoid");local root=model:FindFirstChild("HumanoidRootPart")
+	if not hum or not root then model:Destroy();return end
+	styleZombie(model,boss);addName(model,tostring(sender),boss);addWalk(hum)
+	hum.MaxHealth=boss and 850 or 100;hum.Health=hum.MaxHealth;hum.WalkSpeed=boss and 8 or 9;hum.JumpPower=36
+	for _,bp in ipairs(model:GetDescendants()) do if bp:IsA("BasePart") then bp.Anchored=false;pcall(function() bp:SetNetworkOwner(nil) end) end end
 	active+=1;stats()
-	task.spawn(function()
-		emergeFromGround(model,spawnPos)
-		if model.Parent and hum.Health>0 then hum.WalkSpeed=boss and 8.2 or rng:NextNumber(7.4,9.4);startChase(model) end
-	end)
 	hum.Died:Connect(function()
 		if model:GetAttribute("Dead") then return end
-		model:SetAttribute("Dead",true);hum.WalkSpeed=0;active=math.max(0,active-1);kills+=1;stats()
-		for _,obj in ipairs(model:GetDescendants()) do if obj:IsA("BasePart") then obj.CanTouch=false;obj.CanCollide=false end end
-		Debris:AddItem(model,1.5)
+		model:SetAttribute("Dead",true);active=math.max(0,active-1);kills+=1;stats()
+		for _,bp in ipairs(model:GetDescendants()) do if bp:IsA("BasePart") then bp.CanCollide=false;bp.CanTouch=false end end
+		task.delay(1.2,function() if model.Parent then model:Destroy() end end)
 	end)
+	local pos=forcedPos or chooseSpawnPoint();emergeFromGround(model,pos)
+	if model.Parent and hum.Health>0 then hum.WalkSpeed=boss and 8 or 9;startChase(model) end
 	return model
 end
 
 local function spawnGroup(sender,count,boss)
-	count=math.clamp(tonumber(count) or 1,1,24)
-	if boss then
-		-- Boss gets one guaranteed outdoor location; escorts use separate clear points so they don't stack inside him.
-		spawnZombie(sender,true,chooseSpawnPoint())
-		for i=1,count do
-			task.delay(.18*i,function() spawnZombie(sender.."_ESCORT_"..i,false,chooseSpawnPoint()) end)
-		end
-	else
-		for i=1,count do task.delay(.10*(i-1),function() spawnZombie(sender.."_"..i,false,chooseSpawnPoint()) end) end
-	end
+	count=math.clamp(tonumber(count) or 1,1,30)
+	if boss then spawnZombie(sender,true,chooseSpawnPoint()) end
+	for i=1,count do task.delay((i-1)*.08,function() spawnZombie(sender..(count>1 and ("_"..i) or ""),false,chooseSpawnPoint()) end) end
 end
 
 testRemote.OnServerEvent:Connect(function(player,amount)
-	amount=math.clamp(tonumber(amount) or 10,1,20);print("ZOMBIE TEST SPAWN:",player.Name,amount);spawnGroup("TEST_VIEWER",amount,false)
+	if player~=hostPlayer() then return end
+	amount=math.clamp(tonumber(amount) or 10,1,20)
+	spawnGroup("TEST_VIEWER",amount,false)
+	print("ZOMBIE TEST SPAWN:",player.Name,amount)
 end)
 
 giftSpawn.Event:Connect(function(sender,count,boss)
-	sender=tostring(sender or "VIEWER")
-	if boss then
-		print("GIFT SPAWN: BOSS +",count,"escort from",sender)
-		spawnGroup(sender,math.clamp(tonumber(count) or 6,1,12),true)
-	else
-		print("GIFT SPAWN:",count,"zombies from",sender)
-		spawnGroup(sender,math.clamp(tonumber(count) or 1,1,24),false)
-	end
+	spawnGroup(tostring(sender or "VIEWER"),tonumber(count) or 1,boss==true)
 end)
 
-local weapons={Pistol={damage=20,range=100},SMG={damage=11,range=95},Shotgun={damage=30,range=65},Rifle={damage=31,range=145},Minigun={damage=8,range=120}}
+local weaponData={Pistol={damage=20,range=100},SMG={damage=11,range=95},Shotgun={damage=30,range=65},Rifle={damage=31,range=145},Minigun={damage=8,range=120},Sword={damage=40,range=10}}
 attackRemote.OnServerEvent:Connect(function(player,target,weapon)
-	if typeof(target)~="Instance" or not target:IsDescendantOf(enemies) then return end
-	local char=player.Character;local pr=char and char:FindFirstChild("HumanoidRootPart");local eh=target:FindFirstChildOfClass("Humanoid");local er=target:FindFirstChild("HumanoidRootPart")
-	if not pr or not eh or not er or eh.Health<=0 or target:GetAttribute("Dead") then return end
-	local d=(pr.Position-er.Position).Magnitude
-	if weapon=="Sword" then if d<=10 then eh:TakeDamage(40) end;return end
-	local cfg=weapons[weapon];if cfg and d<=cfg.range+10 then eh:TakeDamage(cfg.damage) end
+	if player~=hostPlayer() or typeof(target)~="Instance" or not target:IsDescendantOf(enemies) then return end
+	local model=target:IsA("Model") and target or target:FindFirstAncestorOfClass("Model")
+	if not model or not model:IsDescendantOf(enemies) then return end
+	local h=model:FindFirstChildOfClass("Humanoid");local r=model:FindFirstChild("HumanoidRootPart");local char=player.Character;local pr=char and char:FindFirstChild("HumanoidRootPart")
+	local cfg=weaponData[tostring(weapon)] or weaponData.Rifle
+	if not h or not r or not pr or h.Health<=0 or model:GetAttribute("Dead") then return end
+	if (pr.Position-r.Position).Magnitude>cfg.range+8 then return end
+	h:TakeDamage(cfg.damage)
 end)
 
-print("ZOMBIE CORE V3.1 READY - outdoor spawn clearance + reliable boss escorts.")
+print("ZOMBIE CORE V3.2 READY - outdoor spawns, reliable gift hordes, occluded viewer tags.")
