@@ -10,8 +10,6 @@ local Lighting = game:GetService("Lighting")
 local TweenService = game:GetService("TweenService")
 local Debris = game:GetService("Debris")
 
-local rng = Random.new()
-
 local function remote(name)
 	local r = ReplicatedStorage:FindFirstChild(name)
 	if r and not r:IsA("RemoteEvent") then r:Destroy(); r=nil end
@@ -19,31 +17,24 @@ local function remote(name)
 	return r
 end
 
+local function bindable(name)
+	local b=ServerStorage:FindFirstChild(name)
+	if b and not b:IsA("BindableEvent") then b:Destroy(); b=nil end
+	if not b then b=Instance.new("BindableEvent"); b.Name=name; b.Parent=ServerStorage end
+	return b
+end
+
 local fxRemote = remote("GiftFX")
 local debugRemote = remote("GiftDebug")
-local spawnRequest = remote("GiftSpawnRequest")
-
-local dispatch = ServerStorage:FindFirstChild("ViewersVsMeGiftDispatch")
-if dispatch and not dispatch:IsA("BindableEvent") then dispatch:Destroy(); dispatch=nil end
-if not dispatch then dispatch=Instance.new("BindableEvent"); dispatch.Name="ViewersVsMeGiftDispatch"; dispatch.Parent=ServerStorage end
+local dispatch = bindable("ViewersVsMeGiftDispatch")
+local spawnRequest = bindable("ViewersVsMeSpawnRequest")
 
 local enemies = workspace:WaitForChild("TikTokEnemies")
 
-local function host()
-	return Players:GetPlayers()[1]
-end
-
-local function character()
-	local p=host(); return p and p.Character
-end
-
-local function humanoid()
-	local c=character(); return c and c:FindFirstChildOfClass("Humanoid")
-end
-
-local function root()
-	local c=character(); return c and c:FindFirstChild("HumanoidRootPart")
-end
+local function host() return Players:GetPlayers()[1] end
+local function character() local p=host(); return p and p.Character end
+local function humanoid() local c=character(); return c and c:FindFirstChildOfClass("Humanoid") end
+local function root() local c=character(); return c and c:FindFirstChild("HumanoidRootPart") end
 
 local function announce(side,title,subtitle,color)
 	fxRemote:FireAllClients({kind="announce",side=side,title=title,subtitle=subtitle,color=color})
@@ -102,7 +93,7 @@ local function wipeNormal(sender)
 end
 
 local function spawnPack(sender,count,boss)
-	spawnRequest:FireAllClients({sender=sender,count=count,boss=boss})
+	spawnRequest:Fire({sender=sender,count=count,boss=boss==true})
 end
 
 local function damagePlayer(amount,sender,label)
@@ -134,11 +125,15 @@ local function meteor(sender)
 	task.delay(2.1,function()
 		local h=humanoid(); local rr=root(); if h and rr and (rr.Position-target).Magnitude<10 then h:TakeDamage(35) end
 		local blast=Instance.new("Explosion"); blast.Position=target; blast.BlastRadius=13; blast.BlastPressure=0; blast.DestroyJointRadiusPercent=0; blast.Parent=workspace
-		for _,m in ipairs(enemies:GetChildren()) do local eh=m:FindFirstChildOfClass("Humanoid"); local er=m:FindFirstChild("HumanoidRootPart"); if eh and er and (er.Position-target).Magnitude<13 then eh:TakeDamage(80) end end
+		for _,m in ipairs(enemies:GetChildren()) do
+			local eh=m:FindFirstChildOfClass("Humanoid"); local er=m:FindFirstChild("HumanoidRootPart")
+			if eh and er and (er.Position-target).Magnitude<13 then eh:TakeDamage(80) end
+		end
 	end)
 end
 
--- Edit this table whenever you want to rebalance the live.
+-- HELP SIDE: keeps you alive, buffs you, or upgrades the gun.
+-- AGAINST SIDE: viewers make the run harder.
 local Gifts = {
 	["Rose"]={side="HELP",action=function(sender) heal(8,sender) end},
 	["Heart Me"]={side="HELP",action=function(sender) setGiftWeapon("SMG",14,sender) end},
@@ -156,20 +151,14 @@ local Gifts = {
 }
 
 local function processGift(giftName,sender,count)
-	giftName=tostring(giftName or "")
-	sender=tostring(sender or "VIEWER")
-	count=math.clamp(tonumber(count) or 1,1,20)
+	giftName=tostring(giftName or ""); sender=tostring(sender or "VIEWER"); count=math.clamp(tonumber(count) or 1,1,20)
 	local cfg=Gifts[giftName]
-	if not cfg then
-		warn("GIFT EVENT: unmapped gift",giftName)
-		return
-	end
+	if not cfg then warn("GIFT EVENT: unmapped gift",giftName); return end
 	for _=1,count do cfg.action(sender) end
 	print("GIFT EVENT:",cfg.side,giftName,"from",sender,"x"..count)
 end
 
 dispatch.Event:Connect(processGift)
-
 debugRemote.OnServerEvent:Connect(function(player,giftName)
 	if player~=host() then return end
 	processGift(giftName,"TEST_VIEWER",1)
