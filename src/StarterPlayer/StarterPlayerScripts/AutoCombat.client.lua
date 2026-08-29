@@ -1,480 +1,314 @@
 -- AutoCombat.client.lua
--- VIEWERS VS ME - PLAYER AI V2.1
--- Autonomous first-person combat with continuous roaming, natural aim easing,
--- obstacle steering, weapon bob/recoil, and stylized Arsenal-inspired viewmodels.
+-- VIEWERS VS ME - PLAYER AI V2.2
+-- Autonomous first-person combat with natural aiming, continuous roaming,
+-- predictive obstacle avoidance, recovery steering, and stylized FPS viewmodels.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Debris = game:GetService("Debris")
+local PathfindingService = game:GetService("PathfindingService")
 
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
 local enemies = workspace:WaitForChild("TikTokEnemies")
 local attackRemote = ReplicatedStorage:WaitForChild("AutoCombatAttack")
-
 local rng = Random.new()
 
 local Weapons = {
-	Pistol = {range=100,cooldown=.32,color=Color3.fromRGB(255,200,80),pellets=1,spread=.45,kick=.065},
-	SMG = {range=95,cooldown=.10,color=Color3.fromRGB(70,205,255),pellets=1,spread=1.1,kick=.035},
-	Shotgun = {range=65,cooldown=.72,color=Color3.fromRGB(255,135,65),pellets=7,spread=4.5,kick=.14},
-	Rifle = {range=145,cooldown=.22,color=Color3.fromRGB(105,255,150),pellets=1,spread=.30,kick=.06},
-	Minigun = {range=120,cooldown=.055,color=Color3.fromRGB(255,75,75),pellets=1,spread=1.8,kick=.025},
-	Sword = {range=10,cooldown=.48,color=Color3.fromRGB(90,220,255),kick=.10},
+	Pistol={range=100,cooldown=.32,color=Color3.fromRGB(255,200,80),pellets=1,spread=.45,kick=.065},
+	SMG={range=95,cooldown=.10,color=Color3.fromRGB(70,205,255),pellets=1,spread=1.1,kick=.035},
+	Shotgun={range=65,cooldown=.72,color=Color3.fromRGB(255,135,65),pellets=7,spread=4.5,kick=.14},
+	Rifle={range=145,cooldown=.22,color=Color3.fromRGB(105,255,150),pellets=1,spread=.30,kick=.06},
+	Minigun={range=120,cooldown=.055,color=Color3.fromRGB(255,75,75),pellets=1,spread=1.8,kick=.025},
+	Sword={range=10,cooldown=.48,color=Color3.fromRGB(90,220,255),kick=.10},
 }
 
-local currentWeapon = "Rifle"
-local shownWeapon = nil
-local currentTarget = nil
-local lastShot = 0
-local lastSword = 0
-local nextStrafeFlip = 0
-local strafeSign = 1
-local roamGoal = nil
-local roamExpires = 0
-local nextPause = 0
-local pauseUntil = 0
-local nextJump = 0
-local lastMoveSample = 0
-local lastMovePos = nil
-local stuckFor = 0
-local recoil = 0
-local bobTime = 0
-local aimPoint = nil
-local viewModel = nil
-local weaponRoot = nil
-local muzzlePart = nil
+local currentWeapon="Rifle"
+local shownWeapon=nil
+local currentTarget=nil
+local lastShot=0
+local lastSword=0
+local strafeSign=1
+local nextStrafeFlip=0
+local roamGoal=nil
+local roamExpire=0
+local currentPath=nil
+local pathWaypoints=nil
+local pathIndex=1
+local nextPathRefresh=0
+local lastMovePos=nil
+local lastMoveSample=0
+local stuckFor=0
+local recoil=0
+local bobTime=0
+local aimPoint=nil
+local viewModel=nil
+local weaponRoot=nil
+local muzzlePart=nil
 
-local rayParams = RaycastParams.new()
-rayParams.FilterType = Enum.RaycastFilterType.Exclude
-rayParams.IgnoreWater = true
+local rayParams=RaycastParams.new()
+rayParams.FilterType=Enum.RaycastFilterType.Exclude
+rayParams.IgnoreWater=true
 
 local function getCharacter()
-	local char = player.Character
+	local char=player.Character
 	if not char then return end
-	local hum = char:FindFirstChildOfClass("Humanoid")
-	local root = char:FindFirstChild("HumanoidRootPart")
-	local head = char:FindFirstChild("Head")
-	if not hum or not root or not head or hum.Health <= 0 then return end
+	local hum=char:FindFirstChildOfClass("Humanoid")
+	local root=char:FindFirstChild("HumanoidRootPart")
+	local head=char:FindFirstChild("Head")
+	if not hum or not root or not head or hum.Health<=0 then return end
 	return char,hum,root,head
 end
 
-local function aliveEnemy(model)
-	if not model or not model.Parent or model:GetAttribute("Dead") == true then return false end
-	local hum = model:FindFirstChildOfClass("Humanoid")
-	local root = model:FindFirstChild("HumanoidRootPart")
-	return hum ~= nil and root ~= nil and hum.Health > 0
+local function aliveEnemy(m)
+	if not m or not m.Parent or m:GetAttribute("Dead")==true then return false end
+	local h=m:FindFirstChildOfClass("Humanoid")
+	local r=m:FindFirstChild("HumanoidRootPart")
+	return h and r and h.Health>0
 end
 
 local function nearestEnemy(root)
-	local best,bestDistance
-	for _,model in ipairs(enemies:GetChildren()) do
-		if aliveEnemy(model) then
-			local eroot = model:FindFirstChild("HumanoidRootPart")
-			local d = (eroot.Position-root.Position).Magnitude
-			if not bestDistance or d < bestDistance then
-				best,bestDistance = model,d
-			end
+	local best,bestD
+	for _,m in ipairs(enemies:GetChildren()) do
+		if aliveEnemy(m) then
+			local er=m:FindFirstChild("HumanoidRootPart")
+			local d=(er.Position-root.Position).Magnitude
+			if not bestD or d<bestD then best,bestD=m,d end
 		end
 	end
-	return best,bestDistance
+	return best,bestD
 end
 
 local function hideLocalCharacter(char)
 	for _,obj in ipairs(char:GetDescendants()) do
-		if obj:IsA("BasePart") then
-			if obj.Name == "Head" or obj.Parent:IsA("Accessory") then
-				obj.LocalTransparencyModifier = 1
-			end
+		if obj:IsA("BasePart") and (obj.Name=="Head" or obj.Parent:IsA("Accessory")) then
+			obj.LocalTransparencyModifier=1
 		end
 	end
 end
 
-local function newPart(model,name,size,color,material,relative,shape)
-	local p = Instance.new("Part")
-	p.Name = name
-	p.Size = size
-	p.Color = color
-	p.Material = material or Enum.Material.Metal
-	p.Anchored = true
-	p.CanCollide = false
-	p.CanTouch = false
-	p.CanQuery = false
-	p.CastShadow = false
-	if shape then p.Shape = shape end
-	p.CFrame = relative or CFrame.new()
-	p.Parent = model
+local function newPart(model,name,size,color,material,relative)
+	local p=Instance.new("Part")
+	p.Name=name;p.Size=size;p.Color=color;p.Material=material or Enum.Material.Metal
+	p.Anchored=true;p.CanCollide=false;p.CanTouch=false;p.CanQuery=false;p.CastShadow=false
+	p.CFrame=relative or CFrame.new();p.Parent=model
 	return p
 end
 
 local function clearViewModel()
 	if viewModel then viewModel:Destroy() end
-	viewModel=nil
-	weaponRoot=nil
-	muzzlePart=nil
-	shownWeapon=nil
+	viewModel=nil;weaponRoot=nil;muzzlePart=nil;shownWeapon=nil
 end
 
 local function addArms(model)
-	local sleeve = Color3.fromRGB(33,38,48)
-	local glove = Color3.fromRGB(16,18,23)
-	newPart(model,"RightUpper",Vector3.new(.44,.44,1.10),sleeve,Enum.Material.Fabric,CFrame.new(.63,-.62,.58)*CFrame.Angles(math.rad(-14),0,math.rad(-8)))
-	newPart(model,"RightGlove",Vector3.new(.36,.34,.62),glove,Enum.Material.SmoothPlastic,CFrame.new(.48,-.43,.02)*CFrame.Angles(math.rad(-10),0,math.rad(-8)))
-	newPart(model,"LeftUpper",Vector3.new(.44,.44,1.12),sleeve,Enum.Material.Fabric,CFrame.new(-.58,-.65,.35)*CFrame.Angles(math.rad(-18),0,math.rad(11)))
-	newPart(model,"LeftGlove",Vector3.new(.36,.34,.60),glove,Enum.Material.SmoothPlastic,CFrame.new(-.40,-.39,-.23)*CFrame.Angles(math.rad(-10),0,math.rad(8)))
-end
-
-local function addRail(model,zStart,count,spacing)
-	for i=0,count-1 do
-		newPart(model,"Rail"..i,Vector3.new(.42,.055,.12),Color3.fromRGB(12,14,18),Enum.Material.Metal,CFrame.new(0,.42,zStart-i*spacing))
-	end
+	local sleeve=Color3.fromRGB(33,38,48)
+	local glove=Color3.fromRGB(16,18,23)
+	newPart(model,"RightArm",Vector3.new(.44,.44,1.18),sleeve,Enum.Material.Fabric,CFrame.new(.72,-.63,.45)*CFrame.Angles(math.rad(-16),0,math.rad(-10)))
+	newPart(model,"RightGlove",Vector3.new(.36,.34,.62),glove,Enum.Material.SmoothPlastic,CFrame.new(.52,-.40,-.10)*CFrame.Angles(math.rad(-9),0,math.rad(-8)))
+	newPart(model,"LeftArm",Vector3.new(.44,.44,1.16),sleeve,Enum.Material.Fabric,CFrame.new(-.62,-.67,.20)*CFrame.Angles(math.rad(-18),0,math.rad(12)))
+	newPart(model,"LeftGlove",Vector3.new(.36,.34,.60),glove,Enum.Material.SmoothPlastic,CFrame.new(-.43,-.39,-.38)*CFrame.Angles(math.rad(-11),0,math.rad(9)))
 end
 
 local function makeWeaponModel(name)
-	clearViewModel()
-	shownWeapon = name
-	local model = Instance.new("Model")
-	model.Name = "FPSViewModel"
-	model.Parent = camera
-	viewModel = model
-	weaponRoot = newPart(model,"Root",Vector3.new(.05,.05,.05),Color3.new(),Enum.Material.SmoothPlastic,CFrame.new())
-	weaponRoot.Transparency = 1
-	model.PrimaryPart = weaponRoot
-	addArms(model)
-
-	local black = Color3.fromRGB(10,12,16)
-	local dark = Color3.fromRGB(25,29,36)
-	local steel = Color3.fromRGB(79,88,102)
-	local lightSteel = Color3.fromRGB(132,142,158)
-	local red = Color3.fromRGB(235,48,60)
-	local cyan = Color3.fromRGB(65,210,255)
-	local gold = Color3.fromRGB(230,175,55)
-
-	if name == "Sword" then
-		newPart(model,"Grip",Vector3.new(.24,.24,1.00),black,Enum.Material.SmoothPlastic,CFrame.new(.32,-.18,-.10)*CFrame.Angles(math.rad(90),0,0))
-		newPart(model,"Pommel",Vector3.new(.34,.24,.34),steel,Enum.Material.Metal,CFrame.new(.32,-.72,-.10))
-		newPart(model,"Guard",Vector3.new(1.18,.14,.24),steel,Enum.Material.Metal,CFrame.new(.32,.03,-.42))
-		newPart(model,"BladeCore",Vector3.new(.11,.12,3.72),Color3.fromRGB(205,214,228),Enum.Material.Metal,CFrame.new(.32,.04,-2.35))
-		newPart(model,"BladeEdge",Vector3.new(.026,.135,3.55),cyan,Enum.Material.Neon,CFrame.new(.39,.04,-2.35))
-		newPart(model,"BladeSpine",Vector3.new(.03,.13,3.35),dark,Enum.Material.Metal,CFrame.new(.255,.04,-2.22))
-		newPart(model,"BladeAccent",Vector3.new(.028,.14,1.30),red,Enum.Material.Neon,CFrame.new(.255,.04,-1.75))
-		return
+	clearViewModel();shownWeapon=name
+	local model=Instance.new("Model");model.Name="FPSViewModel";model.Parent=camera;viewModel=model
+	weaponRoot=newPart(model,"Root",Vector3.new(.05,.05,.05),Color3.new(),Enum.Material.SmoothPlastic,CFrame.new())
+	weaponRoot.Transparency=1;model.PrimaryPart=weaponRoot;addArms(model)
+	local black=Color3.fromRGB(10,12,16);local dark=Color3.fromRGB(25,29,36);local steel=Color3.fromRGB(78,88,102)
+	local light=Color3.fromRGB(132,142,158);local red=Color3.fromRGB(235,48,60);local cyan=Color3.fromRGB(65,210,255)
+	if name=="Sword" then
+		newPart(model,"Grip",Vector3.new(.25,.25,1.05),black,Enum.Material.SmoothPlastic,CFrame.new(.38,-.22,-.08)*CFrame.Angles(math.rad(90),0,0))
+		newPart(model,"Guard",Vector3.new(1.15,.14,.24),steel,Enum.Material.Metal,CFrame.new(.38,.02,-.42))
+		newPart(model,"Blade",Vector3.new(.10,.12,3.75),Color3.fromRGB(205,214,228),Enum.Material.Metal,CFrame.new(.38,.04,-2.35))
+		newPart(model,"Edge",Vector3.new(.026,.135,3.55),cyan,Enum.Material.Neon,CFrame.new(.445,.04,-2.35))
+		newPart(model,"Accent",Vector3.new(.026,.13,1.45),red,Enum.Material.Neon,CFrame.new(.315,.04,-1.85))
+	else
+		local baseZ=-.15
+		newPart(model,"Receiver",Vector3.new(.56,.58,1.58),dark,Enum.Material.Metal,CFrame.new(.05,-.02,baseZ))
+		newPart(model,"Upper",Vector3.new(.52,.28,1.95),steel,Enum.Material.Metal,CFrame.new(.05,.31,baseZ-.18))
+		newPart(model,"Handguard",Vector3.new(.50,.48,1.95),Color3.fromRGB(38,43,52),Enum.Material.Metal,CFrame.new(.05,.02,-1.92))
+		newPart(model,"Stock",Vector3.new(.52,.58,1.25),black,Enum.Material.SmoothPlastic,CFrame.new(.05,-.02,1.25))
+		newPart(model,"Grip",Vector3.new(.32,.78,.36),black,Enum.Material.SmoothPlastic,CFrame.new(.05,-.62,.22)*CFrame.Angles(math.rad(-13),0,0))
+		newPart(model,"Mag",Vector3.new(.38,.98,.48),black,Enum.Material.Metal,CFrame.new(.05,-.72,-.42)*CFrame.Angles(math.rad(-9),0,0))
+		newPart(model,"Barrel",Vector3.new(.14,.14,1.72),light,Enum.Material.Metal,CFrame.new(.05,.01,-3.72))
+		newPart(model,"MuzzleBrake",Vector3.new(.25,.25,.44),black,Enum.Material.Metal,CFrame.new(.05,.01,-4.77))
+		newPart(model,"OpticMount",Vector3.new(.42,.11,.72),black,Enum.Material.Metal,CFrame.new(.05,.54,-.58))
+		newPart(model,"OpticBody",Vector3.new(.50,.42,.66),black,Enum.Material.Metal,CFrame.new(.05,.73,-.58))
+		newPart(model,"OpticLens",Vector3.new(.27,.25,.04),cyan,Enum.Material.Neon,CFrame.new(.05,.73,-.93))
+		newPart(model,"SideAccent",Vector3.new(.025,.22,1.34),red,Enum.Material.Neon,CFrame.new(.342,.10,-.24))
+		for i=0,6 do newPart(model,"Rail"..i,Vector3.new(.42,.055,.12),black,Enum.Material.Metal,CFrame.new(.05,.43,-.84-i*.27)) end
+		muzzlePart=newPart(model,"Muzzle",Vector3.new(.10,.10,.10),Weapons[currentWeapon].color,Enum.Material.Neon,CFrame.new(.05,.01,-5.02))
+		muzzlePart.Transparency=1
 	end
-
-	if name == "Rifle" then
-		newPart(model,"LowerReceiver",Vector3.new(.56,.58,1.55),dark,Enum.Material.Metal,CFrame.new(0,0,0))
-		newPart(model,"UpperReceiver",Vector3.new(.52,.28,1.98),steel,Enum.Material.Metal,CFrame.new(0,.31,-.18))
-		newPart(model,"Handguard",Vector3.new(.50,.48,1.95),Color3.fromRGB(38,43,52),Enum.Material.Metal,CFrame.new(0,.02,-1.78))
-		newPart(model,"StockBody",Vector3.new(.52,.58,1.32),black,Enum.Material.SmoothPlastic,CFrame.new(0,-.02,1.37))
-		newPart(model,"StockPad",Vector3.new(.58,.68,.20),Color3.fromRGB(35,39,45),Enum.Material.SmoothPlastic,CFrame.new(0,-.02,2.13))
-		newPart(model,"PistolGrip",Vector3.new(.32,.78,.36),black,Enum.Material.SmoothPlastic,CFrame.new(0,-.62,.34)*CFrame.Angles(math.rad(-13),0,0))
-		newPart(model,"Magazine",Vector3.new(.38,.98,.48),black,Enum.Material.Metal,CFrame.new(0,-.72,-.28)*CFrame.Angles(math.rad(-9),0,0))
-		newPart(model,"Barrel",Vector3.new(.14,.14,1.72),lightSteel,Enum.Material.Metal,CFrame.new(0,.01,-3.58))
-		newPart(model,"MuzzleBrake",Vector3.new(.25,.25,.44),black,Enum.Material.Metal,CFrame.new(0,.01,-4.66))
-		newPart(model,"OpticMount",Vector3.new(.42,.11,.72),black,Enum.Material.Metal,CFrame.new(0,.54,-.45))
-		newPart(model,"OpticBody",Vector3.new(.50,.42,.66),black,Enum.Material.Metal,CFrame.new(0,.73,-.45))
-		newPart(model,"OpticLens",Vector3.new(.27,.25,.04),cyan,Enum.Material.Neon,CFrame.new(0,.73,-.80))
-		newPart(model,"ChargingHandle",Vector3.new(.18,.13,.34),lightSteel,Enum.Material.Metal,CFrame.new(.34,.20,.13))
-		newPart(model,"SideAccent",Vector3.new(.025,.22,1.34),red,Enum.Material.Neon,CFrame.new(.292,.10,-.10))
-		newPart(model,"HandAccent",Vector3.new(.025,.08,1.34),red,Enum.Material.Neon,CFrame.new(.262,.10,-1.76))
-		addRail(model,-.70,7,.27)
-		muzzlePart = newPart(model,"Muzzle",Vector3.new(.10,.10,.10),Weapons.Rifle.color,Enum.Material.Neon,CFrame.new(0,.01,-4.92))
-	elseif name == "Pistol" then
-		newPart(model,"Slide",Vector3.new(.44,.35,1.58),steel,Enum.Material.Metal,CFrame.new(.16,.04,-.12))
-		newPart(model,"Frame",Vector3.new(.40,.34,1.04),dark,Enum.Material.Metal,CFrame.new(.16,-.23,.04))
-		newPart(model,"Grip",Vector3.new(.37,.84,.43),black,Enum.Material.SmoothPlastic,CFrame.new(.16,-.70,.40)*CFrame.Angles(math.rad(-13),0,0))
-		newPart(model,"Barrel",Vector3.new(.13,.13,.63),lightSteel,Enum.Material.Metal,CFrame.new(.16,.04,-1.18))
-		newPart(model,"RearSight",Vector3.new(.20,.12,.12),black,Enum.Material.Metal,CFrame.new(.16,.27,.42))
-		newPart(model,"FrontSight",Vector3.new(.10,.12,.10),gold,Enum.Material.Neon,CFrame.new(.16,.27,-.72))
-		newPart(model,"SlideAccent",Vector3.new(.025,.07,1.18),gold,Enum.Material.Neon,CFrame.new(.39,.10,-.12))
-		muzzlePart = newPart(model,"Muzzle",Vector3.new(.09,.09,.09),Weapons.Pistol.color,Enum.Material.Neon,CFrame.new(.16,.04,-1.53))
-	elseif name == "SMG" then
-		newPart(model,"Receiver",Vector3.new(.54,.57,1.72),dark,Enum.Material.Metal,CFrame.new(0,0,-.08))
-		newPart(model,"Upper",Vector3.new(.49,.24,1.58),steel,Enum.Material.Metal,CFrame.new(0,.32,-.18))
-		newPart(model,"Stock",Vector3.new(.43,.49,1.14),black,Enum.Material.SmoothPlastic,CFrame.new(0,-.02,1.26))
-		newPart(model,"Mag",Vector3.new(.34,.88,.42),black,Enum.Material.Metal,CFrame.new(0,-.68,-.28)*CFrame.Angles(math.rad(-8),0,0))
-		newPart(model,"Foregrip",Vector3.new(.27,.67,.29),black,Enum.Material.SmoothPlastic,CFrame.new(0,-.49,-1.42))
-		newPart(model,"Barrel",Vector3.new(.14,.14,1.24),lightSteel,Enum.Material.Metal,CFrame.new(0,.01,-2.39))
-		newPart(model,"TopRail",Vector3.new(.40,.07,1.32),black,Enum.Material.Metal,CFrame.new(0,.46,-.18))
-		newPart(model,"Accent",Vector3.new(.025,.20,1.32),cyan,Enum.Material.Neon,CFrame.new(.285,.08,-.18))
-		muzzlePart = newPart(model,"Muzzle",Vector3.new(.10,.10,.10),Weapons.SMG.color,Enum.Material.Neon,CFrame.new(0,.01,-3.05))
-	elseif name == "Shotgun" then
-		newPart(model,"Receiver",Vector3.new(.56,.59,1.48),dark,Enum.Material.Metal,CFrame.new(0,0,0))
-		newPart(model,"Stock",Vector3.new(.53,.64,1.54),Color3.fromRGB(72,46,31),Enum.Material.Wood,CFrame.new(0,-.05,1.40))
-		newPart(model,"StockPad",Vector3.new(.58,.70,.18),black,Enum.Material.SmoothPlastic,CFrame.new(0,-.05,2.26))
-		newPart(model,"Barrel",Vector3.new(.18,.18,2.78),lightSteel,Enum.Material.Metal,CFrame.new(0,.08,-2.24))
-		newPart(model,"Tube",Vector3.new(.16,.16,2.42),dark,Enum.Material.Metal,CFrame.new(0,-.20,-2.14))
-		newPart(model,"Pump",Vector3.new(.51,.45,.96),Color3.fromRGB(94,60,38),Enum.Material.Wood,CFrame.new(0,-.16,-1.60))
-		newPart(model,"ReceiverAccent",Vector3.new(.025,.07,1.06),red,Enum.Material.Neon,CFrame.new(.295,.22,.02))
-		muzzlePart = newPart(model,"Muzzle",Vector3.new(.11,.11,.11),Weapons.Shotgun.color,Enum.Material.Neon,CFrame.new(0,.08,-3.68))
-	elseif name == "Minigun" then
-		newPart(model,"Housing",Vector3.new(.86,.84,1.72),dark,Enum.Material.Metal,CFrame.new(0,0,-.05))
-		newPart(model,"Rear",Vector3.new(.94,.90,.82),black,Enum.Material.Metal,CFrame.new(0,0,.99))
-		newPart(model,"Grip",Vector3.new(.33,.78,.31),black,Enum.Material.SmoothPlastic,CFrame.new(0,-.69,.20))
-		local offs={{.20,.20},{-.20,.20},{.20,-.20},{-.20,-.20},{0,.29},{0,-.29}}
-		for i,o in ipairs(offs) do
-			newPart(model,"Barrel"..i,Vector3.new(.105,.105,2.72),lightSteel,Enum.Material.Metal,CFrame.new(o[1],o[2],-2.25))
-		end
-		newPart(model,"FrontRing",Vector3.new(.74,.74,.16),steel,Enum.Material.Metal,CFrame.new(0,0,-3.63),Enum.PartType.Cylinder)
-		newPart(model,"Accent",Vector3.new(.03,.31,1.27),red,Enum.Material.Neon,CFrame.new(.445,0,-.16))
-		muzzlePart = newPart(model,"Muzzle",Vector3.new(.12,.12,.12),Weapons.Minigun.color,Enum.Material.Neon,CFrame.new(0,0,-3.73))
-	end
-
-	if muzzlePart then muzzlePart.Transparency = 1 end
 end
 
 local function tracer(a,b,color)
-	local delta = b-a
-	local dist = delta.Magnitude
-	if dist < .05 then return end
-	local p = Instance.new("Part")
-	p.Anchored=true
-	p.CanCollide=false
-	p.CanTouch=false
-	p.CanQuery=false
-	p.Material=Enum.Material.Neon
-	p.Color=color
-	p.Size=Vector3.new(.04,.04,dist)
-	p.CFrame=CFrame.lookAt((a+b)/2,b)
-	p.Parent=workspace
-	Debris:AddItem(p,.05)
+	local d=b-a;local dist=d.Magnitude;if dist<.05 then return end
+	local p=Instance.new("Part");p.Anchored=true;p.CanCollide=false;p.CanTouch=false;p.CanQuery=false;p.Material=Enum.Material.Neon;p.Color=color;p.Size=Vector3.new(.045,.045,dist);p.CFrame=CFrame.lookAt((a+b)/2,b);p.Parent=workspace;Debris:AddItem(p,.045)
 end
 
-local function flashMuzzle()
+local function muzzleFlash()
 	if not muzzlePart then return end
-	muzzlePart.Transparency = 0
-	local light = Instance.new("PointLight")
-	light.Brightness = 2.5
-	light.Range = 8
-	light.Color = muzzlePart.Color
-	light.Parent = muzzlePart
-	Debris:AddItem(light,.04)
-	task.delay(.035,function()
-		if muzzlePart then muzzlePart.Transparency = 1 end
-	end)
+	muzzlePart.Transparency=0
+	task.delay(.035,function() if muzzlePart then muzzlePart.Transparency=1 end end)
 end
 
-local function clearPath(char,origin,dir,distance)
-	if dir.Magnitude < .01 then return true end
-	rayParams.FilterDescendantsInstances = {char,enemies,camera}
-	return workspace:Raycast(origin,dir.Unit*distance,rayParams) == nil
+local function obstacleAhead(root,dir,dist)
+	local char=player.Character
+	rayParams.FilterDescendantsInstances={char,enemies}
+	local origins={root.Position+Vector3.new(0,1.2,0),root.Position+Vector3.new(0,2.6,0),root.Position+Vector3.new(0,.3,0)}
+	for _,o in ipairs(origins) do
+		local hit=workspace:Raycast(o,dir.Unit*dist,rayParams)
+		if hit and hit.Instance and hit.Instance.CanCollide then return hit end
+	end
+	return nil
 end
 
-local function steerDirection(char,root,desired)
-	if desired.Magnitude < .01 then return Vector3.zero end
-	local flat = Vector3.new(desired.X,0,desired.Z)
-	if flat.Magnitude < .01 then return Vector3.zero end
-	local forward = flat.Unit
-	if clearPath(char,root.Position+Vector3.new(0,1.8,0),forward,7) then return forward end
-
-	local left = Vector3.new(-forward.Z,0,forward.X)
-	local right = -left
-	local leftFree = clearPath(char,root.Position+Vector3.new(0,1.8,0),left,8)
-	local rightFree = clearPath(char,root.Position+Vector3.new(0,1.8,0),right,8)
-	if leftFree and not rightFree then return (forward*.25+left).Unit end
-	if rightFree and not leftFree then return (forward*.25+right).Unit end
-	if leftFree and rightFree then return (forward*.20+(rng:NextNumber()<.5 and left or right)).Unit end
-	return (-forward + left*.35).Unit
+local function floorExists(pos)
+	rayParams.FilterDescendantsInstances={player.Character,enemies}
+	return workspace:Raycast(pos+Vector3.new(0,3,0),Vector3.new(0,-8,0),rayParams)~=nil
 end
 
-local function chooseRoam(root)
-	local angle = rng:NextNumber(0,math.pi*2)
-	local distance = rng:NextNumber(18,44)
-	roamGoal = root.Position + Vector3.new(math.cos(angle)*distance,0,math.sin(angle)*distance)
-	roamExpires = os.clock()+rng:NextNumber(2.6,5.0)
+local function steerAround(root,desired)
+	if desired.Magnitude<.05 then return Vector3.zero end
+	local flat=Vector3.new(desired.X,0,desired.Z).Unit
+	local forwardHit=obstacleAhead(root,flat,8)
+	if not forwardHit then return flat end
+	local right=Vector3.new(-flat.Z,0,flat.X)
+	local candidates={right,-right,(flat+right*.85).Unit,(flat-right*.85).Unit,-flat}
+	local best=nil
+	for _,c in ipairs(candidates) do
+		if not obstacleAhead(root,c,7) and floorExists(root.Position+c*5) then best=c;break end
+	end
+	return best or -flat
 end
 
-local function targetAimPosition(target)
-	local eroot = target and target:FindFirstChild("HumanoidRootPart")
-	if not eroot then return nil end
-	local head = target:FindFirstChild("Head")
-	local base = head and head.Position or (eroot.Position+Vector3.new(0,1.8,0))
-	local velocity = eroot.AssemblyLinearVelocity
-	local lead = Vector3.new(velocity.X,0,velocity.Z)*.10
-	return base + lead
+local function computePath(root,goal)
+	local path=PathfindingService:CreatePath({AgentRadius=2.2,AgentHeight=5.2,AgentCanJump=true,AgentCanClimb=false,WaypointSpacing=5})
+	local ok=pcall(function() path:ComputeAsync(root.Position,goal) end)
+	if ok and path.Status==Enum.PathStatus.Success then
+		currentPath=path;pathWaypoints=path:GetWaypoints();pathIndex=2
+	else
+		currentPath=nil;pathWaypoints=nil;pathIndex=1
+	end
 end
 
-local function fireGun(target)
-	local cfg = Weapons[currentWeapon]
-	if not cfg or os.clock()-lastShot < cfg.cooldown then return end
-	local targetPos = targetAimPosition(target)
-	if not targetPos then return end
-	lastShot = os.clock()
-	recoil = math.min(recoil+cfg.kick,.22)
-	flashMuzzle()
-	local origin = muzzlePart and muzzlePart.Position or camera.CFrame.Position
+local function pathDirection(root,goal)
+	if os.clock()>nextPathRefresh then
+		nextPathRefresh=os.clock()+.65
+		computePath(root,goal)
+	end
+	if pathWaypoints and pathWaypoints[pathIndex] then
+		local wp=pathWaypoints[pathIndex]
+		if (root.Position-wp.Position).Magnitude<3 then pathIndex+=1;wp=pathWaypoints[pathIndex] end
+		if wp then
+			local char,hum=getCharacter()
+			if hum and wp.Action==Enum.PathWaypointAction.Jump then hum.Jump=true end
+			return wp.Position-root.Position
+		end
+	end
+	return goal-root.Position
+end
+
+local function chooseRoamGoal(root)
+	for _=1,10 do
+		local angle=rng:NextNumber(0,math.pi*2);local dist=rng:NextNumber(18,42)
+		local p=root.Position+Vector3.new(math.cos(angle)*dist,0,math.sin(angle)*dist)
+		if floorExists(p) then roamGoal=p;roamExpire=os.clock()+rng:NextNumber(3.5,6.5);nextPathRefresh=0;return end
+	end
+	roamGoal=root.Position+Vector3.new(rng:NextNumber(-15,15),0,rng:NextNumber(-15,15));roamExpire=os.clock()+3
+end
+
+local function shoot(root,target)
+	local cfg=Weapons[currentWeapon];if not cfg or os.clock()-lastShot<cfg.cooldown then return end
+	local er=target and target:FindFirstChild("HumanoidRootPart");if not er then return end
+	lastShot=os.clock();recoil=math.min(.18,recoil+cfg.kick);muzzleFlash()
+	local origin=camera.CFrame.Position+camera.CFrame.LookVector*1.2
 	for _=1,cfg.pellets do
-		local spread = cfg.spread
-		local aim = targetPos + Vector3.new(rng:NextNumber(-spread,spread),rng:NextNumber(-spread*.25,spread*.25),rng:NextNumber(-spread,spread))
+		local aim=er.Position+Vector3.new((rng:NextNumber()-.5)*cfg.spread,1+(rng:NextNumber()-.5)*cfg.spread*.25,(rng:NextNumber()-.5)*cfg.spread)
 		tracer(origin,aim,cfg.color)
 	end
 	attackRemote:FireServer(target,currentWeapon)
 end
 
-local function swingSword(target)
-	if os.clock()-lastSword < Weapons.Sword.cooldown then return end
-	lastSword = os.clock()
-	recoil = math.min(recoil+.12,.24)
-	attackRemote:FireServer(target,"Sword")
+local function sword(target)
+	if os.clock()-lastSword<Weapons.Sword.cooldown then return end
+	lastSword=os.clock();recoil=.11;attackRemote:FireServer(target,"Sword")
 end
 
-local function updateMovement(dt,char,hum,root,target,distance)
-	hum.AutoRotate = false
-	hum.WalkSpeed = target and 19 or 17
-
-	if os.clock() > nextPause then
-		nextPause = os.clock()+rng:NextNumber(2.8,5.2)
-		pauseUntil = os.clock()+rng:NextNumber(.08,.24)
-	end
-
-	local move = Vector3.zero
-	local facePos = nil
-
-	if target and aliveEnemy(target) then
-		local eroot = target:FindFirstChild("HumanoidRootPart")
-		local toEnemy = eroot.Position-root.Position
-		local flat = Vector3.new(toEnemy.X,0,toEnemy.Z)
-		local forward = flat.Magnitude > .01 and flat.Unit or root.CFrame.LookVector
-		local right = Vector3.new(-forward.Z,0,forward.X)
-
-		if os.clock() > nextStrafeFlip then
-			nextStrafeFlip = os.clock()+rng:NextNumber(.65,1.45)
-			strafeSign = rng:NextNumber()<.5 and -1 or 1
-		end
-
-		if distance > 43 then
-			move = forward + right*strafeSign*.20
-		elseif distance < 12 then
-			move = -forward + right*strafeSign*.45
-		else
-			local pressure = rng:NextNumber(-.12,.16)
-			move = right*strafeSign + forward*pressure
-		end
-		facePos = eroot.Position
-	else
-		if not roamGoal or os.clock()>roamExpires or (Vector3.new(roamGoal.X-root.Position.X,0,roamGoal.Z-root.Position.Z)).Magnitude < 4 then
-			chooseRoam(root)
-		end
-		move = roamGoal-root.Position
-		facePos = root.Position+move
-	end
-
-	move = steerDirection(char,root,move)
-	if os.clock() < pauseUntil then move = Vector3.zero end
-	hum:Move(move,false)
-
-	if facePos then
-		local flatLook = Vector3.new(facePos.X,root.Position.Y,facePos.Z)
-		if (flatLook-root.Position).Magnitude > .1 then
-			local desired = CFrame.lookAt(root.Position,flatLook)
-			root.CFrame = root.CFrame:Lerp(desired,1-math.exp(-dt*7.0))
-		end
-	end
-
-	if os.clock()-lastMoveSample > .18 then
-		if lastMovePos then
-			local moved = (root.Position-lastMovePos).Magnitude
-			if move.Magnitude > .2 and moved < .18 then stuckFor += .18 else stuckFor = 0 end
-		end
-		lastMovePos = root.Position
-		lastMoveSample = os.clock()
-	end
-
-	if stuckFor > .72 and os.clock()>nextJump then
-		nextJump = os.clock()+1.2
-		hum.Jump = true
-		chooseRoam(root)
-		stuckFor = 0
-	elseif target and distance < 18 and rng:NextNumber() < dt*.17 and os.clock()>nextJump then
-		nextJump = os.clock()+rng:NextNumber(1.3,2.5)
-		hum.Jump = true
-	end
-end
-
-local function updateCamera(dt,char,hum,root,head,target)
-	player.CameraMode = Enum.CameraMode.LockFirstPerson
-	camera.CameraType = Enum.CameraType.Scriptable
-	hideLocalCharacter(char)
-
-	local desiredPoint
-	if target and aliveEnemy(target) then
-		desiredPoint = targetAimPosition(target)
-	else
-		desiredPoint = head.Position + root.CFrame.LookVector*70 + Vector3.new(0,.15,0)
-	end
-	if not desiredPoint then desiredPoint = head.Position+root.CFrame.LookVector*70 end
-
-	if not aimPoint then aimPoint = desiredPoint end
-	local aimAlpha = 1-math.exp(-dt*(target and 5.0 or 3.0))
-	aimPoint = aimPoint:Lerp(desiredPoint,aimAlpha)
-
-	bobTime += dt*(hum.MoveDirection.Magnitude>.05 and 9.5 or 3.2)
-	local speedBob = hum.MoveDirection.Magnitude
-	local bobX = math.sin(bobTime)*.035*speedBob
-	local bobY = math.abs(math.cos(bobTime))*-.028*speedBob
-	local sway = math.sin(os.clock()*1.7)*.012
-	recoil = recoil*math.exp(-dt*12)
-
-	local camPos = head.Position + Vector3.new(0,.12,0)
-	local look = CFrame.lookAt(camPos,aimPoint)
-	camera.CFrame = look * CFrame.Angles(-recoil*.42,sway,0) * CFrame.new(bobX,bobY,0)
-	camera.FieldOfView = 76
-
-	local desiredWeapon = (target and select(2,nearestEnemy(root)) and select(2,nearestEnemy(root)) <= 8.5) and "Sword" or currentWeapon
-	if shownWeapon ~= desiredWeapon then makeWeaponModel(desiredWeapon) end
-	if viewModel then
-		local vmBobX = math.sin(bobTime)*.028*speedBob
-		local vmBobY = math.abs(math.cos(bobTime))*-.020*speedBob
-		local baseOffset
-		if shownWeapon == "Sword" then
-			baseOffset = CFrame.new(.68,-.88,-1.15)*CFrame.Angles(math.rad(-7),math.rad(-7),math.rad(7))
-		else
-			baseOffset = CFrame.new(.62,-.82,-1.25)*CFrame.Angles(math.rad(-4),math.rad(-2),math.rad(1.5))
-		end
-		local kick = CFrame.new(0,0,recoil*1.1)*CFrame.Angles(-recoil*.75,0,recoil*.12)
-		viewModel:PivotTo(camera.CFrame*baseOffset*CFrame.new(vmBobX,vmBobY,0)*kick)
-	end
-end
-
-player.CharacterAdded:Connect(function()
-	clearViewModel()
-	aimPoint=nil
-	roamGoal=nil
-	lastMovePos=nil
-	stuckFor=0
-	task.wait(.35)
-	local char=player.Character
-	if char then hideLocalCharacter(char) end
-end)
+player.CameraMode=Enum.CameraMode.LockFirstPerson
 
 RunService.RenderStepped:Connect(function(dt)
-	local char,hum,root,head = getCharacter()
-	if not char then return end
+	local char,hum,root,head=getCharacter();if not char then return end
+	hideLocalCharacter(char)
+	if shownWeapon~=currentWeapon then makeWeaponModel(currentWeapon) end
 
-	if not currentTarget or not aliveEnemy(currentTarget) then
-		currentTarget = nearestEnemy(root)
-	end
-	local distance
-	if currentTarget and aliveEnemy(currentTarget) then
-		local eroot=currentTarget:FindFirstChild("HumanoidRootPart")
-		distance=(eroot.Position-root.Position).Magnitude
-	else
-		currentTarget,distance = nearestEnemy(root)
-	end
+	local target,dist=nearestEnemy(root);currentTarget=target
+	local desiredMove=Vector3.zero
 
-	updateMovement(dt,char,hum,root,currentTarget,distance)
-	updateCamera(dt,char,hum,root,head,currentTarget)
-
-	if currentTarget and distance then
-		if distance <= 8.5 then
-			if shownWeapon ~= "Sword" then makeWeaponModel("Sword") end
-			swingSword(currentTarget)
-		elseif distance <= Weapons[currentWeapon].range then
-			if shownWeapon ~= currentWeapon then makeWeaponModel(currentWeapon) end
-			fireGun(currentTarget)
+	if target and aliveEnemy(target) then
+		local er=target:FindFirstChild("HumanoidRootPart")
+		local eh=target:FindFirstChildOfClass("Humanoid")
+		if er then
+			local predicted=er.Position+er.AssemblyLinearVelocity*.15+Vector3.new(0,1.25,0)
+			aimPoint=aimPoint and aimPoint:Lerp(predicted,math.clamp(dt*5.5,0,1)) or predicted
+			local flatTo=Vector3.new(er.Position.X-root.Position.X,0,er.Position.Z-root.Position.Z)
+			if os.clock()>nextStrafeFlip then strafeSign*=-1;nextStrafeFlip=os.clock()+rng:NextNumber(1.0,2.4) end
+			local right=flatTo.Magnitude>0 and Vector3.new(-flatTo.Z,0,flatTo.X).Unit or Vector3.xAxis
+			if dist>31 then desiredMove=flatTo.Unit
+			elseif dist<10 then desiredMove=(-flatTo.Unit+right*.35*strafeSign).Unit
+			else desiredMove=(right*strafeSign+flatTo.Unit*.12).Unit end
+			desiredMove=steerAround(root,desiredMove)
+			if obstacleAhead(root,desiredMove,8) then
+				local combatGoal=root.Position+desiredMove*12
+				desiredMove=steerAround(root,pathDirection(root,combatGoal))
+			end
+			hum.WalkSpeed=20
+			hum:Move(desiredMove,false)
+			if dist<=8.5 then currentWeapon="Sword";sword(target) else currentWeapon="Rifle";shoot(root,target) end
 		end
+	else
+		currentWeapon="Rifle";aimPoint=nil
+		if not roamGoal or os.clock()>roamExpire or (root.Position-roamGoal).Magnitude<4 then chooseRoamGoal(root) end
+		local dir=pathDirection(root,roamGoal)
+		desiredMove=steerAround(root,dir)
+		hum.WalkSpeed=18
+		hum:Move(desiredMove,false)
+	end
+
+	if os.clock()-lastMoveSample>.20 then
+		lastMoveSample=os.clock()
+		if lastMovePos then
+			local moved=(root.Position-lastMovePos).Magnitude
+			if desiredMove.Magnitude>.2 and moved<.16 then stuckFor+=.20 else stuckFor=math.max(0,stuckFor-.25) end
+			if stuckFor>.85 then
+				hum.Jump=true;strafeSign*=-1;roamGoal=nil;currentPath=nil;pathWaypoints=nil;nextPathRefresh=0;stuckFor=0
+			end
+		end
+		lastMovePos=root.Position
+	end
+
+	local lookTarget
+	if aimPoint then lookTarget=aimPoint else lookTarget=root.Position+root.CFrame.LookVector*30+Vector3.new(0,1.4,0) end
+	local camPos=head.Position+Vector3.new(0,.15,0)
+	local desiredCam=CFrame.lookAt(camPos,lookTarget)
+	local current=camera.CFrame
+	camera.CFrame=current:Lerp(desiredCam,math.clamp(dt*(aimPoint and 5.2 or 3.2),0,1))
+	root.CFrame=root.CFrame:Lerp(CFrame.lookAt(root.Position,Vector3.new(camera.CFrame.LookVector.X+root.Position.X,root.Position.Y,camera.CFrame.LookVector.Z+root.Position.Z)),math.clamp(dt*5,0,1))
+
+	bobTime+=dt*(hum.MoveDirection.Magnitude>.1 and 8.5 or 2.0)
+	recoil*=math.max(0,1-dt*10)
+	if viewModel and weaponRoot then
+		local bobX=math.sin(bobTime)*.018*hum.MoveDirection.Magnitude
+		local bobY=math.abs(math.cos(bobTime))*-.022*hum.MoveDirection.Magnitude
+		local base=camera.CFrame*CFrame.new(.46+ bobX,-.62+bobY,-1.25+recoil)*CFrame.Angles(math.rad(-4-recoil*50),math.rad(-2),math.rad(-1))
+		viewModel:PivotTo(base)
 	end
 end)
 
-print("PLAYER AI V2.1 READY - roaming restored, natural aim enabled, FPS viewmodels upgraded.")
+player.CharacterAdded:Connect(function()
+	task.wait(.5);clearViewModel();roamGoal=nil;pathWaypoints=nil;aimPoint=nil
+end)
+
+print("PLAYER AI V2.2 READY - advanced obstacle avoidance enabled.")
