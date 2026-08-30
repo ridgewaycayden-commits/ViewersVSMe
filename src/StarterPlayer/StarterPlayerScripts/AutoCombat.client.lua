@@ -1,5 +1,5 @@
 -- AutoCombat.client.lua
--- VIEWERS VS ME - PLAYER AI V3.1
+-- VIEWERS VS ME - PLAYER AI V3.2
 -- Imported FPS weapons + visible gunfire + ammo/reload + manual pause + road-focused movement.
 
 local Players=game:GetService("Players")
@@ -19,7 +19,7 @@ local Weapons={
  Pistol={range=100,cooldown=.30,kick=.075,asset="Handgun",size=2.65,offset=CFrame.new(.76,-.82,-2.05)*CFrame.Angles(math.rad(-5),math.rad(169),math.rad(2)),tracer=Color3.fromRGB(255,214,105),clip=12,reserve=72,reload=1.05},
  SMG={range=95,cooldown=.09,kick=.04,asset="HyperlaserGun",size=3.35,offset=CFrame.new(.77,-.80,-2.12)*CFrame.Angles(math.rad(-4),math.rad(170),math.rad(2)),tracer=Color3.fromRGB(90,220,255),clip=36,reserve=180,reload=1.25},
  Shotgun={range=65,cooldown=.70,kick=.16,asset="RocketLauncher",size=3.8,offset=CFrame.new(.84,-.89,-2.35)*CFrame.Angles(math.rad(-6),math.rad(169),math.rad(2)),tracer=Color3.fromRGB(255,150,75),clip=6,reserve=36,reload=1.65},
- Rifle={range=145,cooldown=.16,kick=.075,asset="AK47",size=2.95,offset=CFrame.new(1.42,-1.20,-3.05)*CFrame.Angles(math.rad(-10),math.rad(154),math.rad(6)),tracer=Color3.fromRGB(255,214,90),clip=30,reserve=150,reload=1.35},
+ Rifle={range=145,cooldown=.16,kick=.075,asset="AK47",size=3.75,offset=CFrame.new(1.18,-1.08,-2.35)*CFrame.Angles(math.rad(-7),math.rad(166),math.rad(3)),tracer=Color3.fromRGB(255,214,90),clip=30,reserve=150,reload=1.35},
  Minigun={range=120,cooldown=.055,kick=.028,asset="Minigun",size=4.05,offset=CFrame.new(.90,-.98,-2.55)*CFrame.Angles(math.rad(-6),math.rad(169),math.rad(2)),tracer=Color3.fromRGB(255,105,75),clip=120,reserve=480,reload=2.0},
  Sword={range=10,cooldown=.45,kick=.11,asset="Knife",size=2.35,offset=CFrame.new(.78,-.86,-1.65)*CFrame.Angles(math.rad(-15),math.rad(174),math.rad(11)),tracer=Color3.fromRGB(160,235,255),clip=1,reserve=0,reload=0},
 }
@@ -114,7 +114,6 @@ local function makeWeapon(n)
  local cfg=Weapons[n] or Weapons.Rifle
  local source=weaponAssets and weaponAssets:FindFirstChild(cfg.asset)
  if not source then warn("VIEWERS VS ME: missing weapon asset",cfg.asset,"- using fallback");viewModel,weaponRoot=fallbackWeapon(n);publishWeaponState();return end
-
  local holder=Instance.new("Model");holder.Name="FPSViewModel_"..cfg.asset;holder.Parent=camera
  local clone=source:Clone()
  for _,obj in ipairs(clone:GetDescendants()) do
@@ -122,10 +121,8 @@ local function makeWeapon(n)
  end
  for _,child in ipairs(clone:GetChildren()) do child.Parent=holder end
  clone:Destroy()
-
  weaponRoot=holder:FindFirstChild("Handle",true) or holder:FindFirstChild("Main",true) or holder:FindFirstChild("AimPart",true) or holder:FindFirstChildWhichIsA("BasePart",true)
  if not weaponRoot then holder:Destroy();viewModel,weaponRoot=fallbackWeapon(n);publishWeaponState();return end
-
  for _,obj in ipairs(holder:GetDescendants()) do
   if obj:IsA("BasePart") then obj.Anchored=true;obj.CanCollide=false;obj.CanTouch=false;obj.CanQuery=false;obj.CastShadow=false end
  end
@@ -252,7 +249,6 @@ RunService.RenderStepped:Connect(function(dt)
  local char,hum,root,head=getCharacter();if not char then return end
  local paused=player:GetAttribute("AutoMovePaused")==true;local target,dist,visible=nearest(root);local desired=Vector3.zero
  local wanted=currentWeapon
-
  if paused then
   wanted=giftGun();if target and visible and dist<=8.5 then wanted="Sword" end
  else
@@ -269,15 +265,12 @@ RunService.RenderStepped:Connect(function(dt)
    local d=Vector3.new(roamGoal.X-root.Position.X,0,roamGoal.Z-root.Position.Z);if d.Magnitude>0 then desired=roadAdjustedDirection(root,d.Unit);hum.WalkSpeed=15.5;hum:Move(desired,false) end
   end
  end
-
  if wanted~=currentWeapon then currentWeapon=wanted;reloading=false;publishWeaponState() end
  if target and visible then shoot(target) end
-
  if not paused then
   local look=target and visible and point(target) or (root.Position+(desired.Magnitude>.1 and desired or root.CFrame.LookVector)*30+Vector3.new(0,1.4,0))
   if look then local cp=head.Position+Vector3.new(0,.15,0);camera.CFrame=camera.CFrame:Lerp(CFrame.lookAt(cp,look),math.clamp(dt*3.5,0,1));local f=camera.CFrame.LookVector;root.CFrame=root.CFrame:Lerp(CFrame.lookAt(root.Position,root.Position+Vector3.new(f.X,0,f.Z)),math.clamp(dt*4,0,1)) end
  end
-
  if shownWeapon~=currentWeapon then makeWeapon(currentWeapon) end
  recoil*=math.max(0,1-dt*11);bobClock+=dt*(hum.MoveDirection.Magnitude>.1 and 7 or 2)
  if viewModel and weaponRoot then
@@ -290,4 +283,4 @@ RunService.RenderStepped:Connect(function(dt)
 end)
 
 player.CharacterAdded:Connect(function() task.wait(.4);clearVM();roamGoal=nil;cachedRoadDir=Vector3.zero;reloading=false;publishWeaponState() end)
-print("PLAYER AI V3.1 READY - AK moved low/right, clean HUD compatible, gift weapons preserved")
+print("PLAYER AI V3.2 READY - AK proper FPS scale/placement, gift weapons preserved")
