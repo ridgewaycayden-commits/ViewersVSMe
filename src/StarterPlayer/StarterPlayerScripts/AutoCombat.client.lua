@@ -1,11 +1,12 @@
 -- AutoCombat.client.lua
--- VIEWERS VS ME - PLAYER AI V2.9
--- Autonomous FPS combat + manual pause + road-focused movement + imported weapon models + gunfire FX.
+-- VIEWERS VS ME - PLAYER AI V3.0
+-- Imported FPS weapons + visible gunfire + ammo/reload + manual pause + road-focused movement.
 
 local Players=game:GetService("Players")
 local ReplicatedStorage=game:GetService("ReplicatedStorage")
 local RunService=game:GetService("RunService")
 local Debris=game:GetService("Debris")
+local TweenService=game:GetService("TweenService")
 
 local player=Players.LocalPlayer
 local camera=workspace.CurrentCamera
@@ -15,12 +16,12 @@ local weaponAssets=ReplicatedStorage:WaitForChild("WeaponAssets",10)
 local rng=Random.new()
 
 local Weapons={
- Pistol={range=100,cooldown=.32,kick=.065,asset="Handgun",size=2.8,offset=CFrame.new(.72,-.78,-1.95)*CFrame.Angles(math.rad(-5),math.rad(170),math.rad(2)),tracer=Color3.fromRGB(255,210,95)},
- SMG={range=95,cooldown=.10,kick=.035,asset="HyperlaserGun",size=3.5,offset=CFrame.new(.72,-.76,-2.0)*CFrame.Angles(math.rad(-4),math.rad(171),math.rad(2)),tracer=Color3.fromRGB(90,220,255)},
- Shotgun={range=65,cooldown=.72,kick=.14,asset="RocketLauncher",size=4.0,offset=CFrame.new(.78,-.83,-2.2)*CFrame.Angles(math.rad(-5),math.rad(170),math.rad(2)),tracer=Color3.fromRGB(255,145,70)},
- Rifle={range=145,cooldown=.22,kick=.06,asset="AK47",size=3.35,offset=CFrame.new(.93,-.94,-2.48)*CFrame.Angles(math.rad(-7),math.rad(166),math.rad(3)),tracer=Color3.fromRGB(255,205,90)},
- Minigun={range=120,cooldown=.055,kick=.025,asset="Minigun",size=4.25,offset=CFrame.new(.82,-.9,-2.35)*CFrame.Angles(math.rad(-5),math.rad(170),math.rad(2)),tracer=Color3.fromRGB(255,95,70)},
- Sword={range=10,cooldown=.48,kick=.10,asset="Knife",size=2.5,offset=CFrame.new(.72,-.82,-1.55)*CFrame.Angles(math.rad(-14),math.rad(175),math.rad(10)),tracer=Color3.fromRGB(160,235,255)},
+ Pistol={range=100,cooldown=.30,kick=.075,asset="Handgun",size=2.65,offset=CFrame.new(.76,-.82,-2.05)*CFrame.Angles(math.rad(-5),math.rad(169),math.rad(2)),tracer=Color3.fromRGB(255,214,105),clip=12,reserve=72,reload=1.05},
+ SMG={range=95,cooldown=.09,kick=.04,asset="HyperlaserGun",size=3.35,offset=CFrame.new(.77,-.80,-2.12)*CFrame.Angles(math.rad(-4),math.rad(170),math.rad(2)),tracer=Color3.fromRGB(90,220,255),clip=36,reserve=180,reload=1.25},
+ Shotgun={range=65,cooldown=.70,kick=.16,asset="RocketLauncher",size=3.8,offset=CFrame.new(.84,-.89,-2.35)*CFrame.Angles(math.rad(-6),math.rad(169),math.rad(2)),tracer=Color3.fromRGB(255,150,75),clip=6,reserve=36,reload=1.65},
+ Rifle={range=145,cooldown=.16,kick=.075,asset="AK47",size=3.18,offset=CFrame.new(1.00,-1.03,-2.70)*CFrame.Angles(math.rad(-8),math.rad(164),math.rad(4)),tracer=Color3.fromRGB(255,214,90),clip=30,reserve=150,reload=1.35},
+ Minigun={range=120,cooldown=.055,kick=.028,asset="Minigun",size=4.05,offset=CFrame.new(.90,-.98,-2.55)*CFrame.Angles(math.rad(-6),math.rad(169),math.rad(2)),tracer=Color3.fromRGB(255,105,75),clip=120,reserve=480,reload=2.0},
+ Sword={range=10,cooldown=.45,kick=.11,asset="Knife",size=2.35,offset=CFrame.new(.78,-.86,-1.65)*CFrame.Angles(math.rad(-15),math.rad(174),math.rad(11)),tracer=Color3.fromRGB(160,235,255),clip=1,reserve=0,reload=0},
 }
 
 local currentWeapon="Rifle"
@@ -37,9 +38,23 @@ local nextStrafeFlip=0
 local nextRoadCheck=0
 local cachedRoadDir=Vector3.zero
 local bobClock=0
+local reloading=false
+local ammo={}
+local reserve={}
+
+for name,cfg in pairs(Weapons) do ammo[name]=cfg.clip;reserve[name]=cfg.reserve end
 
 local losParams=RaycastParams.new();losParams.FilterType=Enum.RaycastFilterType.Exclude;losParams.IgnoreWater=true
 local moveRayParams=RaycastParams.new();moveRayParams.FilterType=Enum.RaycastFilterType.Exclude;moveRayParams.IgnoreWater=true
+
+local function publishWeaponState()
+ local cfg=Weapons[currentWeapon] or Weapons.Rifle
+ player:SetAttribute("CurrentWeapon",currentWeapon)
+ player:SetAttribute("CurrentWeaponAsset",cfg.asset)
+ player:SetAttribute("CurrentAmmo",ammo[currentWeapon] or cfg.clip)
+ player:SetAttribute("ReserveAmmo",reserve[currentWeapon] or 0)
+ player:SetAttribute("Reloading",reloading)
+end
 
 local function getCharacter()
  local c=player.Character;if not c then return end
@@ -98,7 +113,7 @@ local function makeWeapon(n)
  clearVM();shownWeapon=n
  local cfg=Weapons[n] or Weapons.Rifle
  local source=weaponAssets and weaponAssets:FindFirstChild(cfg.asset)
- if not source then warn("VIEWERS VS ME: missing weapon asset",cfg.asset,"- using fallback");viewModel,weaponRoot=fallbackWeapon(n);return end
+ if not source then warn("VIEWERS VS ME: missing weapon asset",cfg.asset,"- using fallback");viewModel,weaponRoot=fallbackWeapon(n);publishWeaponState();return end
 
  local holder=Instance.new("Model");holder.Name="FPSViewModel_"..cfg.asset;holder.Parent=camera
  local clone=source:Clone()
@@ -109,7 +124,7 @@ local function makeWeapon(n)
  clone:Destroy()
 
  weaponRoot=holder:FindFirstChild("Handle",true) or holder:FindFirstChild("Main",true) or holder:FindFirstChild("AimPart",true) or holder:FindFirstChildWhichIsA("BasePart",true)
- if not weaponRoot then holder:Destroy();viewModel,weaponRoot=fallbackWeapon(n);return end
+ if not weaponRoot then holder:Destroy();viewModel,weaponRoot=fallbackWeapon(n);publishWeaponState();return end
 
  for _,obj in ipairs(holder:GetDescendants()) do
   if obj:IsA("BasePart") then obj.Anchored=true;obj.CanCollide=false;obj.CanTouch=false;obj.CanQuery=false;obj.CastShadow=false end
@@ -119,6 +134,7 @@ local function makeWeapon(n)
  if ok and size then local longest=math.max(size.X,size.Y,size.Z);if longest>.05 then pcall(function() holder:ScaleTo(math.clamp(cfg.size/longest,.06,10)) end) end end
  muzzlePart=holder:FindFirstChild("Muzzle",true) or holder:FindFirstChild("MuzzleLoc",true) or holder:FindFirstChild("MouseLoc",true) or holder:FindFirstChild("Chamber",true) or holder:FindFirstChild("A1",true)
  viewModel=holder
+ publishWeaponState()
  print("EQUIPPED IMPORTED WEAPON:",n,"->",cfg.asset)
 end
 
@@ -127,48 +143,68 @@ local function muzzlePosition()
   if muzzlePart:IsA("Attachment") then return muzzlePart.WorldPosition end
   if muzzlePart:IsA("BasePart") then return muzzlePart.Position end
  end
- return (camera.CFrame*CFrame.new(.75,-.48,-3.4)).Position
+ return (camera.CFrame*CFrame.new(.78,-.45,-3.2)).Position
 end
 
 local function tracerFX(fromPos,toPos,color,width,lifetime)
  local delta=toPos-fromPos;local dist=delta.Magnitude;if dist<.1 then return end
- local p=Instance.new("Part");p.Name="LocalBulletTracer";p.Anchored=true;p.CanCollide=false;p.CanTouch=false;p.CanQuery=false;p.CastShadow=false;p.Material=Enum.Material.Neon;p.Color=color;p.Transparency=.08;p.Size=Vector3.new(width,width,dist);p.CFrame=CFrame.lookAt((fromPos+toPos)*.5,toPos);p.Parent=workspace
- Debris:AddItem(p,lifetime or .055)
+ local p=Instance.new("Part");p.Name="LocalBulletTracer";p.Anchored=true;p.CanCollide=false;p.CanTouch=false;p.CanQuery=false;p.CastShadow=false;p.Material=Enum.Material.Neon;p.Color=color;p.Transparency=.02;p.Size=Vector3.new(width,width,dist);p.CFrame=CFrame.lookAt((fromPos+toPos)*.5,toPos);p.Parent=workspace
+ local light=Instance.new("PointLight");light.Color=color;light.Brightness=.7;light.Range=5;light.Shadows=false;light.Parent=p
+ Debris:AddItem(p,lifetime or .10)
 end
 
 local function muzzleFlash(pos,cfg)
- local flash=Instance.new("Part");flash.Name="LocalMuzzleFlash";flash.Anchored=true;flash.CanCollide=false;flash.CanTouch=false;flash.CanQuery=false;flash.CastShadow=false;flash.Material=Enum.Material.Neon;flash.Color=cfg.tracer;flash.Shape=Enum.PartType.Ball;flash.Size=Vector3.new(.32,.32,.32);flash.CFrame=CFrame.new(pos);flash.Parent=workspace
- local light=Instance.new("PointLight");light.Color=cfg.tracer;light.Brightness=2.5;light.Range=8;light.Shadows=false;light.Parent=flash
- Debris:AddItem(flash,.045)
+ local flash=Instance.new("Part");flash.Name="LocalMuzzleFlash";flash.Anchored=true;flash.CanCollide=false;flash.CanTouch=false;flash.CanQuery=false;flash.CastShadow=false;flash.Material=Enum.Material.Neon;flash.Color=cfg.tracer;flash.Shape=Enum.PartType.Ball;flash.Size=Vector3.new(.52,.52,.52);flash.CFrame=CFrame.new(pos);flash.Parent=workspace
+ local light=Instance.new("PointLight");light.Color=cfg.tracer;light.Brightness=4.5;light.Range=12;light.Shadows=false;light.Parent=flash
+ TweenService:Create(flash,TweenInfo.new(.055),{Size=Vector3.new(.12,.12,.12),Transparency=1}):Play();Debris:AddItem(flash,.07)
 end
 
 local function casingFX()
  if currentWeapon=="Sword" or currentWeapon=="Minigun" or currentWeapon=="Shotgun" then return end
- local shell=Instance.new("Part");shell.Name="LocalShell";shell.Size=Vector3.new(.08,.08,.24);shell.Material=Enum.Material.Metal;shell.Color=Color3.fromRGB(185,135,55);shell.CanCollide=false;shell.CanTouch=false;shell.CanQuery=false;shell.CastShadow=false
- shell.CFrame=camera.CFrame*CFrame.new(.55,-.35,-1.1)*CFrame.Angles(0,0,math.rad(90));shell.Parent=workspace
- shell.AssemblyLinearVelocity=camera.CFrame.RightVector*rng:NextNumber(7,11)+Vector3.new(0,rng:NextNumber(3,7),0)+camera.CFrame.LookVector*rng:NextNumber(-1,2)
- shell.AssemblyAngularVelocity=Vector3.new(rng:NextNumber(-18,18),rng:NextNumber(-18,18),rng:NextNumber(-18,18));Debris:AddItem(shell,.8)
+ local shell=Instance.new("Part");shell.Name="LocalShell";shell.Size=Vector3.new(.10,.10,.28);shell.Material=Enum.Material.Metal;shell.Color=Color3.fromRGB(195,145,60);shell.CanCollide=false;shell.CanTouch=false;shell.CanQuery=false;shell.CastShadow=false
+ shell.CFrame=camera.CFrame*CFrame.new(.55,-.34,-1.15)*CFrame.Angles(0,0,math.rad(90));shell.Parent=workspace
+ shell.AssemblyLinearVelocity=camera.CFrame.RightVector*rng:NextNumber(8,13)+Vector3.new(0,rng:NextNumber(4,8),0)+camera.CFrame.LookVector*rng:NextNumber(-1,2)
+ shell.AssemblyAngularVelocity=Vector3.new(rng:NextNumber(-22,22),rng:NextNumber(-22,22),rng:NextNumber(-22,22));Debris:AddItem(shell,1)
 end
 
 local function impactFX(pos,color)
- local hit=Instance.new("Part");hit.Name="LocalImpact";hit.Anchored=true;hit.CanCollide=false;hit.CanTouch=false;hit.CanQuery=false;hit.CastShadow=false;hit.Material=Enum.Material.Neon;hit.Color=color;hit.Shape=Enum.PartType.Ball;hit.Size=Vector3.new(.16,.16,.16);hit.CFrame=CFrame.new(pos);hit.Parent=workspace;Debris:AddItem(hit,.08)
+ local hit=Instance.new("Part");hit.Name="LocalImpact";hit.Anchored=true;hit.CanCollide=false;hit.CanTouch=false;hit.CanQuery=false;hit.CastShadow=false;hit.Material=Enum.Material.Neon;hit.Color=color;hit.Shape=Enum.PartType.Ball;hit.Size=Vector3.new(.22,.22,.22);hit.CFrame=CFrame.new(pos);hit.Parent=workspace;Debris:AddItem(hit,.11)
+end
+
+local function startReload()
+ if reloading or currentWeapon=="Sword" then return end
+ local cfg=Weapons[currentWeapon] or Weapons.Rifle
+ if (ammo[currentWeapon] or 0)>=cfg.clip or (reserve[currentWeapon] or 0)<=0 then return end
+ reloading=true;publishWeaponState()
+ local thisWeapon=currentWeapon
+ task.delay(cfg.reload,function()
+  if currentWeapon~=thisWeapon then reloading=false;publishWeaponState();return end
+  local need=cfg.clip-(ammo[thisWeapon] or 0)
+  local take=math.min(need,reserve[thisWeapon] or 0)
+  ammo[thisWeapon]=(ammo[thisWeapon] or 0)+take
+  reserve[thisWeapon]=(reserve[thisWeapon] or 0)-take
+  reloading=false;publishWeaponState()
+ end)
 end
 
 local function shoot(t)
- if not t or not los(t) then return end
+ if not t or not los(t) or reloading then return end
  local cfg=Weapons[currentWeapon] or Weapons.Rifle
+ if currentWeapon~="Sword" and (ammo[currentWeapon] or 0)<=0 then startReload();return end
  if os.clock()-lastShot<cfg.cooldown then return end
  lastShot=os.clock();recoil=cfg.kick
  local aim=point(t);if not aim then return end
  local from=muzzlePosition()
  if currentWeapon=="Shotgun" then
-  for _=1,6 do local spread=Vector3.new(rng:NextNumber(-1.7,1.7),rng:NextNumber(-1.2,1.2),rng:NextNumber(-1.7,1.7));tracerFX(from,aim+spread,cfg.tracer,.035,.05) end
- elseif currentWeapon=="Sword" then
-  -- no bullet tracer for melee
- else
-  tracerFX(from,aim,cfg.tracer,currentWeapon=="Minigun" and .035 or .045,currentWeapon=="Minigun" and .035 or .055)
+  for _=1,7 do local spread=Vector3.new(rng:NextNumber(-1.8,1.8),rng:NextNumber(-1.3,1.3),rng:NextNumber(-1.8,1.8));tracerFX(from,aim+spread,cfg.tracer,.075,.11) end
+ elseif currentWeapon~="Sword" then
+  tracerFX(from,aim,cfg.tracer,currentWeapon=="Minigun" and .065 or .09,currentWeapon=="Minigun" and .075 or .11)
  end
- if currentWeapon~="Sword" then muzzleFlash(from,cfg);casingFX();impactFX(aim,cfg.tracer) end
+ if currentWeapon~="Sword" then
+  ammo[currentWeapon]=math.max(0,(ammo[currentWeapon] or cfg.clip)-1)
+  publishWeaponState();muzzleFlash(from,cfg);casingFX();impactFX(aim,cfg.tracer)
+  if ammo[currentWeapon]<=0 then startReload() end
+ end
  attackRemote:FireServer(t,currentWeapon)
 end
 
@@ -210,11 +246,15 @@ local function chooseRoam(root)
 end
 
 player.CameraMode=Enum.CameraMode.LockFirstPerson
+publishWeaponState()
+
 RunService.RenderStepped:Connect(function(dt)
  local char,hum,root,head=getCharacter();if not char then return end
  local paused=player:GetAttribute("AutoMovePaused")==true;local target,dist,visible=nearest(root);local desired=Vector3.zero
+ local wanted=currentWeapon
+
  if paused then
-  currentWeapon=giftGun();if target and visible then if dist<=8.5 then currentWeapon="Sword" end;shoot(target) end
+  wanted=giftGun();if target and visible and dist<=8.5 then wanted="Sword" end
  else
   if target and alive(target) then
    local er=target:FindFirstChild("HumanoidRootPart");local flat=Vector3.new(er.Position.X-root.Position.X,0,er.Position.Z-root.Position.Z)
@@ -222,26 +262,32 @@ RunService.RenderStepped:Connect(function(dt)
     if os.clock()>nextStrafeFlip then strafeSign=-strafeSign;nextStrafeFlip=os.clock()+rng:NextNumber(1,2.4) end
     local right=flat.Magnitude>0 and Vector3.new(-flat.Z,0,flat.X).Unit or Vector3.xAxis
     if dist>31 then desired=flat.Unit elseif dist<10 then desired=(-flat.Unit+right*.35*strafeSign).Unit else desired=(right*strafeSign+flat.Unit*.12).Unit end
-    desired=roadAdjustedDirection(root,desired);hum.WalkSpeed=20;hum:Move(desired,false);currentWeapon=dist<=8.5 and "Sword" or giftGun();shoot(target)
-   else currentWeapon=giftGun();hum.WalkSpeed=19;if flat.Magnitude>0 then desired=roadAdjustedDirection(root,flat.Unit);hum:Move(desired,false) end end
+    desired=roadAdjustedDirection(root,desired);hum.WalkSpeed=20;hum:Move(desired,false);wanted=dist<=8.5 and "Sword" or giftGun()
+   else wanted=giftGun();hum.WalkSpeed=19;if flat.Magnitude>0 then desired=roadAdjustedDirection(root,flat.Unit);hum:Move(desired,false) end end
   else
-   currentWeapon=giftGun();if not roamGoal or os.clock()>roamExpire or (root.Position-roamGoal).Magnitude<5 then chooseRoam(root) end
+   wanted=giftGun();if not roamGoal or os.clock()>roamExpire or (root.Position-roamGoal).Magnitude<5 then chooseRoam(root) end
    local d=Vector3.new(roamGoal.X-root.Position.X,0,roamGoal.Z-root.Position.Z);if d.Magnitude>0 then desired=roadAdjustedDirection(root,d.Unit);hum.WalkSpeed=15.5;hum:Move(desired,false) end
   end
+ end
+
+ if wanted~=currentWeapon then currentWeapon=wanted;reloading=false;publishWeaponState() end
+ if target and visible then shoot(target) end
+
+ if not paused then
   local look=target and visible and point(target) or (root.Position+(desired.Magnitude>.1 and desired or root.CFrame.LookVector)*30+Vector3.new(0,1.4,0))
   if look then local cp=head.Position+Vector3.new(0,.15,0);camera.CFrame=camera.CFrame:Lerp(CFrame.lookAt(cp,look),math.clamp(dt*3.5,0,1));local f=camera.CFrame.LookVector;root.CFrame=root.CFrame:Lerp(CFrame.lookAt(root.Position,root.Position+Vector3.new(f.X,0,f.Z)),math.clamp(dt*4,0,1)) end
  end
 
  if shownWeapon~=currentWeapon then makeWeapon(currentWeapon) end
- recoil*=math.max(0,1-dt*10);bobClock+=dt*(hum.MoveDirection.Magnitude>.1 and 7 or 2)
+ recoil*=math.max(0,1-dt*11);bobClock+=dt*(hum.MoveDirection.Magnitude>.1 and 7 or 2)
  if viewModel and weaponRoot then
   local cfg=Weapons[currentWeapon] or Weapons.Rifle
-  local moveAmt=hum.MoveDirection.Magnitude>.1 and 1 or .2
-  local bob=CFrame.new(math.sin(bobClock)*.012*moveAmt,math.abs(math.cos(bobClock*2))*.009*moveAmt,0)*CFrame.Angles(0,0,math.rad(math.sin(bobClock)*.35*moveAmt))
-  local recoilCF=CFrame.new(0,0,recoil*1.7)*CFrame.Angles(math.rad(-recoil*52),0,0)
+  local moveAmt=hum.MoveDirection.Magnitude>.1 and 1 or .18
+  local bob=CFrame.new(math.sin(bobClock)*.014*moveAmt,math.abs(math.cos(bobClock*2))*.010*moveAmt,0)*CFrame.Angles(math.rad(math.cos(bobClock)*.18*moveAmt),0,math.rad(math.sin(bobClock)*.42*moveAmt))
+  local recoilCF=CFrame.new(0,0,recoil*1.9)*CFrame.Angles(math.rad(-recoil*58),math.rad(recoil*8),0)
   viewModel:PivotTo(camera.CFrame*cfg.offset*bob*recoilCF)
  end
 end)
 
-player.CharacterAdded:Connect(function() task.wait(.4);clearVM();roamGoal=nil;cachedRoadDir=Vector3.zero end)
-print("PLAYER AI V2.9 READY - imported guns + visible bullets/muzzle flash + TikTok gift weapons + road movement")
+player.CharacterAdded:Connect(function() task.wait(.4);clearVM();roamGoal=nil;cachedRoadDir=Vector3.zero;reloading=false;publishWeaponState() end)
+print("PLAYER AI V3.0 READY - imported guns + strong bullets/muzzle FX + ammo HUD state + TikTok gift weapons")
