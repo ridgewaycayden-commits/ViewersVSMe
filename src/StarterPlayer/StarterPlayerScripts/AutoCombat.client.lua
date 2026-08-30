@@ -19,7 +19,7 @@ local Weapons={
  Pistol={range=100,cooldown=.32,kick=.065,asset="Handgun",size=3.0,offset=CFrame.new(.48,-.58,-1.45)*CFrame.Angles(0,math.rad(180),0)},
  SMG={range=95,cooldown=.10,kick=.035,asset="HyperlaserGun",size=3.8,offset=CFrame.new(.5,-.58,-1.65)*CFrame.Angles(0,math.rad(180),0)},
  Shotgun={range=65,cooldown=.72,kick=.14,asset="RocketLauncher",size=4.5,offset=CFrame.new(.5,-.62,-1.85)*CFrame.Angles(0,math.rad(180),0)},
- Rifle={range=145,cooldown=.22,kick=.06,asset="AK47",size=4.6,offset=CFrame.new(.5,-.6,-1.75)*CFrame.Angles(0,math.rad(180),0)},
+ Rifle={range=145,cooldown=.22,kick=.06,asset="AK47",size=3.75,offset=CFrame.new(.78,-.82,-2.18)*CFrame.Angles(math.rad(-3),math.rad(172),math.rad(2))},
  Minigun={range=120,cooldown=.055,kick=.025,asset="Minigun",size=4.8,offset=CFrame.new(.53,-.67,-1.95)*CFrame.Angles(0,math.rad(180),0)},
  Sword={range=10,cooldown=.48,kick=.10,asset="Knife",size=2.7,offset=CFrame.new(.58,-.7,-1.25)*CFrame.Angles(math.rad(-12),math.rad(180),math.rad(8))},
 }
