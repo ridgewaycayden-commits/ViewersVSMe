@@ -1,19 +1,14 @@
 -- AutoMovePause.client.lua
--- Reliable pause: temporarily disables AutoCombat so it cannot issue movement commands.
--- Manual WASD/Space remains normal while paused. P resumes AutoCombat.
+-- Reliable manual-control toggle for ViewersVSMe.
+-- P pauses ONLY autonomous movement; WASD + Space still work.
+-- Uses PreSimulation so our manual input overrides AutoCombat's RenderStepped Move() before physics.
 
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
-local playerScripts = player:WaitForChild("PlayerScripts")
 local paused = false
-
-local function findAutoCombat()
-	return playerScripts:FindFirstChild("AutoCombat")
-		or playerScripts:FindFirstChild("AutoCombat.client")
-		or playerScripts:FindFirstChild("AutoCombat.client.lua")
-end
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "AutoMoveControls"
@@ -26,7 +21,7 @@ local button = Instance.new("TextButton")
 button.Name = "PauseAutoMove"
 button.AnchorPoint = Vector2.new(1,1)
 button.Position = UDim2.new(1,-22,1,-22)
-button.Size = UDim2.fromOffset(210,46)
+button.Size = UDim2.fromOffset(215,46)
 button.BackgroundColor3 = Color3.fromRGB(20,22,28)
 button.BackgroundTransparency = .08
 button.BorderSizePixel = 0
@@ -47,14 +42,9 @@ stroke.Transparency = .25
 stroke.Color = Color3.fromRGB(120,135,155)
 stroke.Parent = button
 
-local function setHumanoidManualReady()
+local function getHumanoid()
 	local char = player.Character
-	local hum = char and char:FindFirstChildOfClass("Humanoid")
-	if hum then
-		hum.WalkSpeed = 16
-		hum.AutoRotate = true
-		hum:Move(Vector3.zero,false)
-	end
+	return char and char:FindFirstChildOfClass("Humanoid")
 end
 
 local function refresh()
@@ -63,47 +53,55 @@ local function refresh()
 	player:SetAttribute("AutoMovePaused", paused)
 end
 
-local function applyState()
-	local autoCombat = findAutoCombat()
-	if autoCombat and autoCombat:IsA("LocalScript") then
-		autoCombat.Disabled = paused
-	end
-	if paused then
-		setHumanoidManualReady()
-	end
-	refresh()
-end
-
 local function toggle()
 	paused = not paused
-	applyState()
+	local hum = getHumanoid()
+	if hum then
+		hum.WalkSpeed = paused and 16 or 15.5
+		hum:Move(Vector3.zero, false)
+	end
+	refresh()
+	print("AUTO MOVE:", paused and "PAUSED / MANUAL" or "RESUMED")
 end
 
 button.Activated:Connect(toggle)
 UserInputService.InputBegan:Connect(function(input, processed)
 	if processed then return end
-	if input.KeyCode == Enum.KeyCode.P then
-		toggle()
+	if input.KeyCode == Enum.KeyCode.P then toggle() end
+end)
+
+local function manualMoveVector()
+	local x,z = 0,0
+	if UserInputService:IsKeyDown(Enum.KeyCode.W) then z -= 1 end
+	if UserInputService:IsKeyDown(Enum.KeyCode.S) then z += 1 end
+	if UserInputService:IsKeyDown(Enum.KeyCode.A) then x -= 1 end
+	if UserInputService:IsKeyDown(Enum.KeyCode.D) then x += 1 end
+	local v = Vector3.new(x,0,z)
+	if v.Magnitude > 1 then v = v.Unit end
+	return v
+end
+
+-- IMPORTANT: AutoCombat issues Humanoid:Move() in RenderStepped.
+-- PreSimulation runs after rendering input logic but before physics, so this is the
+-- final movement command physics receives whenever manual control is enabled.
+RunService.PreSimulation:Connect(function()
+	if not paused then return end
+	local hum = getHumanoid()
+	if not hum or hum.Health <= 0 then return end
+
+	hum.WalkSpeed = 16
+	hum:Move(manualMoveVector(), true)
+	if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+		hum.Jump = true
 	end
 end)
 
 player.CharacterAdded:Connect(function()
-	task.wait(.3)
-	if paused then setHumanoidManualReady() end
-	applyState()
-end)
-
--- AutoCombat can arrive a moment after this script depending on Rojo/start order.
-task.spawn(function()
-	for _=1,30 do
-		if findAutoCombat() then
-			applyState()
-			return
-		end
-		task.wait(.2)
-	end
-	warn("AUTO MOVE PAUSE: AutoCombat LocalScript not found")
+	task.wait(.25)
+	local hum = getHumanoid()
+	if hum and paused then hum.WalkSpeed = 16 end
+	refresh()
 end)
 
 refresh()
-print("AUTO MOVE PAUSE V5 READY - P disables/enables AutoCombat for true manual control")
+print("AUTO MOVE PAUSE V6 READY - PreSimulation manual override")
