@@ -1,222 +1,247 @@
 -- Nuketown2025.server.lua
--- VIEWERS VS ME - Nuketown 2025 inspired gameplay map, built from original Roblox geometry.
+-- VIEWERS VS ME - Nuketown 2025 inspired gameplay map, rebuilt from original Roblox geometry.
+-- V4: tighter classic layout, cleaner house silhouettes, better vehicles, proper daytime lighting.
 
 local Players=game:GetService("Players")
 local Lighting=game:GetService("Lighting")
 local ROOT="Nuketown2025"
 
-local function part(parent,name,size,cf,color,material,collide)
+local function P(parent,name,size,cf,color,material,collide)
 	local p=Instance.new("Part")
 	p.Name=name;p.Size=size;p.CFrame=cf;p.Color=color;p.Material=material or Enum.Material.SmoothPlastic
 	p.Anchored=true;p.CanCollide=collide~=false;p.CanTouch=false;p.CanQuery=collide~=false
 	p.TopSurface=Enum.SurfaceType.Smooth;p.BottomSurface=Enum.SurfaceType.Smooth;p.Parent=parent
 	return p
 end
-
-local function model(parent,name)local m=Instance.new("Model");m.Name=name;m.Parent=parent;return m end
-local function textFace(p,text,color,face)
-	local g=Instance.new("SurfaceGui");g.Face=face or Enum.NormalId.Front;g.PixelsPerStud=50;g.Parent=p
+local function W(parent,name,size,cf,color,material,collide)
+	local p=Instance.new("WedgePart")
+	p.Name=name;p.Size=size;p.CFrame=cf;p.Color=color;p.Material=material or Enum.Material.SmoothPlastic
+	p.Anchored=true;p.CanCollide=collide~=false;p.CanTouch=false;p.CanQuery=collide~=false;p.Parent=parent
+	return p
+end
+local function M(parent,name)local m=Instance.new("Model");m.Name=name;m.Parent=parent;return m end
+local function G(parent,name,size,cf,tint)
+	local p=P(parent,name,size,cf,tint or Color3.fromRGB(42,73,86),Enum.Material.Glass,false);p.Transparency=.2;return p
+end
+local function TXT(p,text,color,face)
+	local g=Instance.new("SurfaceGui");g.Face=face or Enum.NormalId.Front;g.PixelsPerStud=45;g.Parent=p
 	local t=Instance.new("TextLabel");t.Size=UDim2.fromScale(1,1);t.BackgroundTransparency=1;t.Text=text;t.TextColor3=color;t.Font=Enum.Font.GothamBlack;t.TextScaled=true;t.Parent=g
 end
-local function glass(parent,name,size,cf)
-	local p=part(parent,name,size,cf,Color3.fromRGB(40,73,88),Enum.Material.Glass,false);p.Transparency=.22;return p
+local function cyl(parent,name,size,cf,color,material,collide)
+	local p=P(parent,name,size,cf,color,material,collide);p.Shape=Enum.PartType.Cylinder;return p
 end
 
-for _,name in ipairs({ROOT,"RealMidtown","ManhattanMidtownV10","NeonQuarantineV6","CityCinematicV7","CityProductionV8"}) do
-	local old=workspace:FindFirstChild(name);if old then old:Destroy() end
+for _,name in ipairs({ROOT,"RealMidtown","ManhattanMidtownV10","NeonQuarantineV6","CityCinematicV7","CityProductionV8"})do
+	local old=workspace:FindFirstChild(name);if old then old:Destroy()end
 end
-local oldCity=workspace:FindFirstChild("TikTokAFKCity") or workspace:FindFirstChild("TikTokCity")
-if oldCity then
-	for _,o in ipairs(oldCity:GetDescendants()) do
-		if o:IsA("BasePart") then o.Transparency=1;o.CanCollide=false;o.CanQuery=false elseif o:IsA("Light") then o.Enabled=false end
-	end
-end
+local oldCity=workspace:FindFirstChild("TikTokAFKCity")or workspace:FindFirstChild("TikTokCity")
+if oldCity then for _,o in ipairs(oldCity:GetDescendants())do if o:IsA("BasePart")then o.Transparency=1;o.CanCollide=false;o.CanQuery=false elseif o:IsA("Light")then o.Enabled=false end end end
 
+local oldSpawns=workspace:FindFirstChild("NuketownZombieSpawns");if oldSpawns then oldSpawns:Destroy()end
 local root=Instance.new("Folder");root.Name=ROOT;root.Parent=workspace
 
-Lighting.ClockTime=13.15;Lighting.Brightness=2.8;Lighting.ExposureCompensation=.05
-Lighting.Ambient=Color3.fromRGB(125,135,145);Lighting.OutdoorAmbient=Color3.fromRGB(175,185,195)
-local atm=Lighting:FindFirstChildOfClass("Atmosphere") or Instance.new("Atmosphere",Lighting)
-atm.Density=.12;atm.Haze=.45;atm.Color=Color3.fromRGB(214,229,245);atm.Decay=Color3.fromRGB(183,202,223)
+-- Clean BO2-style sunny test-site presentation. No legacy city-night bloom.
+Lighting.ClockTime=14.1
+Lighting.Brightness=2.15
+Lighting.ExposureCompensation=-.05
+Lighting.Ambient=Color3.fromRGB(125,130,136)
+Lighting.OutdoorAmbient=Color3.fromRGB(176,180,183)
+Lighting.EnvironmentDiffuseScale=.65
+Lighting.EnvironmentSpecularScale=.35
+Lighting.GlobalShadows=true
+Lighting.ShadowSoftness=.28
+local atm=Lighting:FindFirstChildOfClass("Atmosphere")or Instance.new("Atmosphere",Lighting)
+atm.Density=.055;atm.Offset=.05;atm.Haze=.18;atm.Glare=0;atm.Color=Color3.fromRGB(228,222,208);atm.Decay=Color3.fromRGB(183,169,145)
+local bloom=Lighting:FindFirstChildOfClass("BloomEffect")or Instance.new("BloomEffect",Lighting);bloom.Intensity=.08;bloom.Size=12;bloom.Threshold=2
+local cc=Lighting:FindFirstChildOfClass("ColorCorrectionEffect")or Instance.new("ColorCorrectionEffect",Lighting);cc.Brightness=0;cc.Contrast=.05;cc.Saturation=-.04
 
--- test-site desert and central neighborhood
-part(root,"Desert",Vector3.new(520,1,440),CFrame.new(0,-.55,0),Color3.fromRGB(184,157,111),Enum.Material.Sand,true)
-part(root,"Road",Vector3.new(112,.6,340),CFrame.new(0,.05,0),Color3.fromRGB(57,59,61),Enum.Material.Asphalt,true)
-local circle=part(root,"CulDeSac",Vector3.new(142,.62,142),CFrame.new(0,.08,0),Color3.fromRGB(57,59,61),Enum.Material.Asphalt,true)
-circle.Shape=Enum.PartType.Cylinder;circle.Orientation=Vector3.new(0,0,90)
-for _,x in ipairs({-63,63}) do part(root,"Sidewalk",Vector3.new(14,.7,322),CFrame.new(x,.28,0),Color3.fromRGB(213,211,202),Enum.Material.Concrete,true) end
-for _,z in ipairs({-103,103}) do part(root,"FrontLawn",Vector3.new(172,.45,78),CFrame.new(0,.18,z),Color3.fromRGB(78,143,66),Enum.Material.Grass,true) end
+local asphalt=Color3.fromRGB(63,64,65)
+local concrete=Color3.fromRGB(200,196,183)
+local lawn=Color3.fromRGB(78,132,61)
+local desert=Color3.fromRGB(178,150,105)
+local trim=Color3.fromRGB(225,220,203)
+local dark=Color3.fromRGB(51,56,61)
 
--- curb pieces around the central circle give the street the recognizable test-suburb look
-for i=0,31 do
-	local a=(i/32)*math.pi*2
-	local x,z=math.cos(a)*74,math.sin(a)*74
-	part(root,"CircleCurb",Vector3.new(11,.8,2),CFrame.new(x,.42,z)*CFrame.Angles(0,-a,0),Color3.fromRGB(213,211,202),Enum.Material.Concrete,true)
+-- Compact classic map footprint.
+P(root,"Desert",Vector3.new(390,1,350),CFrame.new(0,-.55,0),desert,Enum.Material.Sand,true)
+P(root,"Road",Vector3.new(104,.6,300),CFrame.new(0,.04,0),asphalt,Enum.Material.Asphalt,true)
+local circle=P(root,"CulDeSac",Vector3.new(128,.62,128),CFrame.new(0,.07,0),asphalt,Enum.Material.Asphalt,true);circle.Shape=Enum.PartType.Cylinder;circle.Orientation=Vector3.new(0,0,90)
+for _,x in ipairs({-58,58})do P(root,"Sidewalk",Vector3.new(13,.68,292),CFrame.new(x,.28,0),concrete,Enum.Material.Concrete,true)end
+for _,z in ipairs({-101,101})do
+	P(root,"FrontLawn",Vector3.new(156,.42,56),CFrame.new(0,.18,z),lawn,Enum.Material.Grass,true)
+	P(root,"BackLawn",Vector3.new(184,.42,55),CFrame.new(0,.18,z+(z>0 and 55 or -55)),lawn,Enum.Material.Grass,true)
+end
+-- segmented round curb
+for i=0,39 do local a=i/40*math.pi*2;local x,z=math.cos(a)*68,math.sin(a)*68;P(root,"CircleCurb",Vector3.new(10,.78,1.8),CFrame.new(x,.42,z)*CFrame.Angles(0,-a,0),concrete,Enum.Material.Concrete,true)end
+
+local function fenceLine(parent,startPos,finishPos)
+	local delta=finishPos-startPos;local len=delta.Magnitude;local count=math.max(1,math.floor(len/4))
+	for i=0,count do local pos=startPos:Lerp(finishPos,i/count);P(parent,"FencePost",Vector3.new(.7,5.5,.7),CFrame.new(pos+Vector3.new(0,2.75,0)),Color3.fromRGB(211,205,184),Enum.Material.Wood,true)end
+	local mid=(startPos+finishPos)/2;P(parent,"FenceRail",Vector3.new(.5,.55,len),CFrame.lookAt(mid+Vector3.new(0,1.8,0),finishPos+Vector3.new(0,1.8,0)),Color3.fromRGB(211,205,184),Enum.Material.Wood,true)
+	P(parent,"FenceRail",Vector3.new(.5,.55,len),CFrame.lookAt(mid+Vector3.new(0,4.0,0),finishPos+Vector3.new(0,4.0,0)),Color3.fromRGB(211,205,184),Enum.Material.Wood,true)
 end
 
-local function buildHouse(name,z,main,accent,number,garageSide)
-	local h=model(root,name)
-	local towardCenter=z>0 and -1 or 1
-	local front=z+towardCenter*34
-	local back=z-towardCenter*34
-	local left=-38;local right=38
-
-	-- floors with a real stair opening instead of one solid slab
-	part(h,"GroundFloor",Vector3.new(78,1,68),CFrame.new(0,.5,z),Color3.fromRGB(188,181,165),Enum.Material.WoodPlanks,true)
-	part(h,"UpperFloorL",Vector3.new(31,1,68),CFrame.new(-23.5,20.5,z),Color3.fromRGB(178,171,158),Enum.Material.WoodPlanks,true)
-	part(h,"UpperFloorR",Vector3.new(31,1,68),CFrame.new(23.5,20.5,z),Color3.fromRGB(178,171,158),Enum.Material.WoodPlanks,true)
-	part(h,"UpperFloorBridge",Vector3.new(16,1,28),CFrame.new(0,20.5,z-towardCenter*20),Color3.fromRGB(178,171,158),Enum.Material.WoodPlanks,true)
-
-	-- ground shell, intentionally split around front door and windows
-	part(h,"BackWall",Vector3.new(78,20,2),CFrame.new(0,10,back),main,nil,true)
-	part(h,"LeftWall",Vector3.new(2,20,68),CFrame.new(left,10,z),main,nil,true)
-	part(h,"RightWall",Vector3.new(2,20,68),CFrame.new(right,10,z),main,nil,true)
-	part(h,"FrontLeft",Vector3.new(27,20,2),CFrame.new(-25.5,10,front),main,nil,true)
-	part(h,"FrontRight",Vector3.new(27,20,2),CFrame.new(25.5,10,front),main,nil,true)
-	part(h,"DoorHeader",Vector3.new(24,5,2),CFrame.new(0,17.5,front),main,nil,true)
-	part(h,"DoorL",Vector3.new(6,15,2),CFrame.new(-9,7.5,front),main,nil,true)
-	part(h,"DoorR",Vector3.new(6,15,2),CFrame.new(9,7.5,front),main,nil,true)
-	glass(h,"FrontDoorGlass",Vector3.new(11,11,.45),CFrame.new(0,8,front+towardCenter*1.1))
-
-	-- upper shell and iconic wide bedroom window
-	part(h,"UpperBack",Vector3.new(78,18,2),CFrame.new(0,29,back),main,nil,true)
-	part(h,"UpperLeftSide",Vector3.new(2,18,68),CFrame.new(left,29,z),main,nil,true)
-	part(h,"UpperRightSide",Vector3.new(2,18,68),CFrame.new(right,29,z),main,nil,true)
-	part(h,"UpperFrontLeft",Vector3.new(23,18,2),CFrame.new(-27.5,29,front),main,nil,true)
-	part(h,"UpperFrontRight",Vector3.new(23,18,2),CFrame.new(27.5,29,front),main,nil,true)
-	part(h,"UpperWindowHeader",Vector3.new(32,4,2),CFrame.new(0,36,front),main,nil,true)
-	part(h,"UpperWindowSill",Vector3.new(32,4,2),CFrame.new(0,22,front),main,nil,true)
-	glass(h,"BedroomWindow",Vector3.new(31,10,.45),CFrame.new(0,29,front+towardCenter*1.15))
-	for x=-12,12,8 do part(h,"WindowMullion",Vector3.new(.45,10,.7),CFrame.new(x,29,front+towardCenter*1.3),accent,Enum.Material.Metal,false) end
-
-	-- mid-century roof slab and colored fins
-	part(h,"Roof",Vector3.new(86,2.4,75),CFrame.new(0,39.2,z),Color3.fromRGB(48,55,65),Enum.Material.Slate,true)
-	part(h,"RoofLip",Vector3.new(88,1,5),CFrame.new(0,38.2,front+towardCenter*2),accent,nil,false)
-	for x=-33,33,11 do part(h,"FacadeFin",Vector3.new(2.1,17,3),CFrame.new(x,29,front+towardCenter*2.2),accent,nil,false) end
-
-	-- interior stairs visible from center opening
-	for i=0,10 do
-		part(h,"InteriorStep",Vector3.new(14,1.25,3.2),CFrame.new(-15,i*1.72+1.1,z-towardCenter*(14-i*2.2)),Color3.fromRGB(127,112,94),Enum.Material.WoodPlanks,true)
-	end
-
-	-- garage as an actual room with center-facing opening
-	local gx=garageSide*61
-	local g=model(h,"Garage")
-	part(g,"GarageFloor",Vector3.new(38,1,48),CFrame.new(gx,.5,z-towardCenter*2),Color3.fromRGB(177,177,169),Enum.Material.Concrete,true)
-	part(g,"GarageBack",Vector3.new(38,15,2),CFrame.new(gx,7.5,z-towardCenter*26),Color3.fromRGB(222,218,203),nil,true)
-	part(g,"GarageOuter",Vector3.new(2,15,48),CFrame.new(gx+garageSide*19,7.5,z-towardCenter*2),Color3.fromRGB(222,218,203),nil,true)
-	part(g,"GarageInner",Vector3.new(2,15,48),CFrame.new(gx-garageSide*19,7.5,z-towardCenter*2),Color3.fromRGB(222,218,203),nil,true)
-	part(g,"GarageHeader",Vector3.new(38,4,2),CFrame.new(gx,13,front+towardCenter*1),Color3.fromRGB(222,218,203),nil,true)
-	part(g,"GarageRoof",Vector3.new(42,1.6,52),CFrame.new(gx,15.5,z-towardCenter*2),Color3.fromRGB(58,63,67),Enum.Material.Metal,true)
-
-	-- rear patio/balcony and exterior stair
-	part(h,"RearPatio",Vector3.new(74,.7,28),CFrame.new(0,.35,back-towardCenter*15),Color3.fromRGB(206,197,181),Enum.Material.Concrete,true)
-	part(h,"RearBalcony",Vector3.new(31,1,15),CFrame.new(0,21,back-towardCenter*8),Color3.fromRGB(186,190,187),Enum.Material.Metal,true)
-	for i=0,10 do part(h,"ExteriorStep",Vector3.new(13,1.15,3.1),CFrame.new(28,i*1.65+1,back-towardCenter*(9+i*2)),Color3.fromRGB(161,164,159),Enum.Material.Metal,true) end
-
-	-- house number plate
-	local plate=part(h,"HouseNumber",Vector3.new(8,5,.45),CFrame.new(25,13,front+towardCenter*1.15),Color3.fromRGB(241,239,221),nil,false)
-	textFace(plate,tostring(number),Color3.fromRGB(43,47,49),towardCenter==1 and Enum.NormalId.Back or Enum.NormalId.Front)
-
-	-- backyard fencing
-	part(h,"RearFence",Vector3.new(188,7,1),CFrame.new(0,3.5,back-towardCenter*45),Color3.fromRGB(225,220,200),Enum.Material.Wood,true)
-	for _,x in ipairs({-94,94}) do part(h,"SideFence",Vector3.new(1,7,86),CFrame.new(x,3.5,back-towardCenter*3),Color3.fromRGB(225,220,200),Enum.Material.Wood,true) end
+local function frontWindow(h,cf,w,hgt)
+	G(h,"FrontWindow",Vector3.new(w,hgt,.35),cf,Color3.fromRGB(47,78,91))
+	P(h,"WinTop",Vector3.new(w+.6,.5,.65),cf*CFrame.new(0,hgt/2+.3,0),trim,Enum.Material.Metal,false)
+	P(h,"WinBottom",Vector3.new(w+.6,.5,.65),cf*CFrame.new(0,-hgt/2-.3,0),trim,Enum.Material.Metal,false)
+	P(h,"WinL",Vector3.new(.5,hgt+.6,.65),cf*CFrame.new(-w/2-.3,0,0),trim,Enum.Material.Metal,false)
+	P(h,"WinR",Vector3.new(.5,hgt+.6,.65),cf*CFrame.new(w/2+.3,0,0),trim,Enum.Material.Metal,false)
 end
 
-buildHouse("BlueHouse",-106,Color3.fromRGB(44,183,218),Color3.fromRGB(45,224,180),11,-1)
-buildHouse("OrangeHouse",106,Color3.fromRGB(239,174,76),Color3.fromRGB(245,230,70),13,1)
+local function buildHouse(name,z,main,accent,num,garageSide)
+	local h=M(root,name)
+	local d=z>0 and -1 or 1 -- direction toward center
+	local front=z+d*30
+	local back=z-d*30
+	local gx=garageSide*50
 
+	-- footprint / shell
+	P(h,"GroundFloor",Vector3.new(72,1,58),CFrame.new(0,.5,z),Color3.fromRGB(164,153,135),Enum.Material.WoodPlanks,true)
+	P(h,"RearWall",Vector3.new(72,18,2),CFrame.new(0,9,back),main,nil,true)
+	P(h,"LeftWall",Vector3.new(2,18,58),CFrame.new(-35,9,z),main,nil,true)
+	P(h,"RightWall",Vector3.new(2,18,58),CFrame.new(35,9,z),main,nil,true)
+	-- center-facing lower facade: door + picture windows, not a blank giant wall
+	P(h,"LowerBand",Vector3.new(72,4,2),CFrame.new(0,16,front),trim,nil,true)
+	P(h,"FrontPierL",Vector3.new(9,14,2),CFrame.new(-31.5,7,front),main,nil,true)
+	P(h,"FrontPierML",Vector3.new(6,14,2),CFrame.new(-10,7,front),main,nil,true)
+	P(h,"FrontPierMR",Vector3.new(6,14,2),CFrame.new(10,7,front),main,nil,true)
+	P(h,"FrontPierR",Vector3.new(9,14,2),CFrame.new(31.5,7,front),main,nil,true)
+	frontWindow(h,CFrame.new(-21,8,front+d*1.05),14,8)
+	frontWindow(h,CFrame.new(21,8,front+d*1.05),14,8)
+	G(h,"FrontDoor",Vector3.new(11,12,.35),CFrame.new(0,6.5,front+d*1.05),Color3.fromRGB(40,69,80))
+	P(h,"DoorFrame",Vector3.new(12.5,.7,.7),CFrame.new(0,13,front+d*1.1),trim,Enum.Material.Metal,false)
+
+	-- second floor tighter and slightly cantilevered, matching the classic silhouette
+	P(h,"SecondFloor",Vector3.new(72,1,58),CFrame.new(0,18.5,z),Color3.fromRGB(163,153,140),Enum.Material.WoodPlanks,true)
+	P(h,"UpperRear",Vector3.new(72,17,2),CFrame.new(0,27,back),main,nil,true)
+	P(h,"UpperLeft",Vector3.new(2,17,58),CFrame.new(-35,27,z),main,nil,true)
+	P(h,"UpperRight",Vector3.new(2,17,58),CFrame.new(35,27,z),main,nil,true)
+	P(h,"UpperFrontBandTop",Vector3.new(72,4,2),CFrame.new(0,33.5,front),main,nil,true)
+	P(h,"UpperFrontBandBottom",Vector3.new(72,4,2),CFrame.new(0,20.5,front),main,nil,true)
+	P(h,"UpperFrontL",Vector3.new(17,13,2),CFrame.new(-27.5,27,front),main,nil,true)
+	P(h,"UpperFrontR",Vector3.new(17,13,2),CFrame.new(27.5,27,front),main,nil,true)
+	frontWindow(h,CFrame.new(0,27,front+d*1.08),36,9)
+	for x=-15,15,7.5 do P(h,"WindowFin",Vector3.new(1.1,12,2.5),CFrame.new(x,27,front+d*1.5),accent,nil,false)end
+	-- retro horizontal trim band
+	P(h,"AccentBand",Vector3.new(72,2.2,2.5),CFrame.new(0,18.8,front+d*1.5),accent,nil,false)
+
+	-- low-pitch dark roof with actual shape instead of giant flat brick
+	P(h,"RoofCenter",Vector3.new(76,1.2,16),CFrame.new(0,36.5,z),dark,Enum.Material.Slate,true)
+	W(h,"RoofFront",Vector3.new(76,7,23),CFrame.new(0,36.2,z+d*19)*CFrame.Angles(0,math.pi,0),dark,Enum.Material.Slate,true)
+	W(h,"RoofRear",Vector3.new(76,7,23),CFrame.new(0,36.2,z-d*19),dark,Enum.Material.Slate,true)
+
+	-- side garage/carport, open toward center
+	local g=M(h,"Garage")
+	P(g,"GarageFloor",Vector3.new(31,1,42),CFrame.new(gx,.5,z+d*1),Color3.fromRGB(176,175,166),Enum.Material.Concrete,true)
+	P(g,"GarageBack",Vector3.new(31,13,2),CFrame.new(gx,6.5,z-d*20),trim,nil,true)
+	P(g,"GarageOuter",Vector3.new(2,13,42),CFrame.new(gx+garageSide*15,6.5,z+d*1),trim,nil,true)
+	P(g,"GarageInner",Vector3.new(2,13,42),CFrame.new(gx-garageSide*15,6.5,z+d*1),trim,nil,true)
+	P(g,"GarageHeader",Vector3.new(31,3,2),CFrame.new(gx,11.5,front+d*.5),trim,nil,true)
+	P(g,"GarageRoof",Vector3.new(34,1.3,45),CFrame.new(gx,13.1,z+d*1),dark,Enum.Material.Slate,true)
+	P(g,"GarageAccent",Vector3.new(33,1.5,2.5),CFrame.new(gx,12.1,front+d*1.2),accent,nil,false)
+
+	-- rear deck and exterior stairs
+	P(h,"RearDeck",Vector3.new(34,1,13),CFrame.new(0,18.8,back-d*7),Color3.fromRGB(166,169,165),Enum.Material.Metal,true)
+	for i=0,10 do P(h,"ExteriorStep",Vector3.new(11,1,3),CFrame.new(26,i*1.55+1,back-d*(7+i*2)),Color3.fromRGB(157,160,158),Enum.Material.Metal,true)end
+	P(h,"RearPatio",Vector3.new(70,.6,20),CFrame.new(0,.3,back-d*12),concrete,Enum.Material.Concrete,true)
+
+	-- number plate
+	local plate=P(h,"HouseNumber",Vector3.new(7,4,.4),CFrame.new(27,11.5,front+d*1.1),Color3.fromRGB(237,234,216),nil,false)
+	TXT(plate,tostring(num),Color3.fromRGB(48,51,53),d==1 and Enum.NormalId.Back or Enum.NormalId.Front)
+
+	-- rear fencing, with openings on side paths
+	fenceLine(h,Vector3.new(-78,0,back-d*41),Vector3.new(78,0,back-d*41))
+	fenceLine(h,Vector3.new(-78,0,back-d*41),Vector3.new(-78,0,back-d*6))
+	fenceLine(h,Vector3.new(78,0,back-d*41),Vector3.new(78,0,back-d*6))
+end
+
+buildHouse("BlueHouse",-100,Color3.fromRGB(73,164,183),Color3.fromRGB(69,185,153),11,-1)
+buildHouse("OrangeHouse",100,Color3.fromRGB(215,151,75),Color3.fromRGB(224,199,69),13,1)
+
+-- center vehicles: more detailed silhouettes, less giant blockiness
 local function wheel(parent,cf)
-	local p=part(parent,"Wheel",Vector3.new(4.2,4.2,1.6),cf,Color3.fromRGB(23,24,26),Enum.Material.SmoothPlastic,true)
-	p.Shape=Enum.PartType.Cylinder;return p
+	local p=cyl(parent,"Wheel",Vector3.new(4.1,4.1,1.5),cf,Color3.fromRGB(22,23,24),Enum.Material.SmoothPlastic,true)
+	local hub=cyl(parent,"Hub",Vector3.new(2.1,2.1,1.58),cf,Color3.fromRGB(115,118,119),Enum.Material.Metal,false);return p,hub
 end
 
--- recognizable center bus
-local bus=model(root,"SchoolBus")
-local bcf=CFrame.new(-15,0,-5)*CFrame.Angles(0,math.rad(5),0)
-part(bus,"BusLower",Vector3.new(18,6.5,62),bcf*CFrame.new(0,4.3,0),Color3.fromRGB(232,189,43),Enum.Material.Metal,true)
-part(bus,"BusUpper",Vector3.new(17,7.5,58),bcf*CFrame.new(0,11.2,0),Color3.fromRGB(241,204,52),Enum.Material.Metal,true)
-part(bus,"FrontCap",Vector3.new(17,11,4),bcf*CFrame.new(0,8,-31),Color3.fromRGB(221,174,34),Enum.Material.Metal,true)
-part(bus,"RearCap",Vector3.new(17,11,4),bcf*CFrame.new(0,8,31),Color3.fromRGB(221,174,34),Enum.Material.Metal,true)
-for z=-22,22,8.8 do for _,x in ipairs({-8.65,8.65}) do glass(bus,"BusWindow",Vector3.new(.35,4.4,6.7),bcf*CFrame.new(x,11.5,z)) end end
-for _,x in ipairs({-7.7,7.7}) do for _,z in ipairs({-20,20}) do wheel(bus,bcf*CFrame.new(x,2.3,z)*CFrame.Angles(0,0,math.rad(90))) end end
-local busSign=part(bus,"SchoolBusSign",Vector3.new(11,2.2,.4),bcf*CFrame.new(0,14.5,-33.05),Color3.fromRGB(255,219,70),nil,false);textFace(busSign,"SCHOOL BUS",Color3.fromRGB(40,40,35),Enum.NormalId.Front)
+local bus=M(root,"SchoolBus")
+local bcf=CFrame.new(-13,0,-8)*CFrame.Angles(0,math.rad(2),0)
+P(bus,"Chassis",Vector3.new(17,2.4,58),bcf*CFrame.new(0,2.1,0),Color3.fromRGB(57,54,42),Enum.Material.Metal,true)
+P(bus,"Lower",Vector3.new(17,5.2,58),bcf*CFrame.new(0,5.2,0),Color3.fromRGB(210,169,42),Enum.Material.Metal,true)
+P(bus,"Upper",Vector3.new(16.2,6.5,53),bcf*CFrame.new(0,10.7,0),Color3.fromRGB(225,186,48),Enum.Material.Metal,true)
+W(bus,"FrontSlope",Vector3.new(16.2,5.5,6),bcf*CFrame.new(0,9.3,-29),Color3.fromRGB(215,173,43),Enum.Material.Metal,true)
+P(bus,"Rear",Vector3.new(16.2,10.5,3),bcf*CFrame.new(0,8,29.5),Color3.fromRGB(205,160,38),Enum.Material.Metal,true)
+for z=-20,20,8 do for _,x in ipairs({-8.22,8.22})do G(bus,"Window",Vector3.new(.28,3.8,5.8),bcf*CFrame.new(x,11.1,z),Color3.fromRGB(43,64,69))end end
+G(bus,"Windshield",Vector3.new(13.5,4,.3),bcf*CFrame.new(0,11.2,-32.1),Color3.fromRGB(42,61,65))
+for _,x in ipairs({-7.7,7.7})do for _,z in ipairs({-19,19})do wheel(bus,bcf*CFrame.new(x,2.4,z)*CFrame.Angles(0,0,math.rad(90)))end end
+P(bus,"FrontBumper",Vector3.new(17.8,1.2,1.5),bcf*CFrame.new(0,3.1,-32.2),Color3.fromRGB(78,79,77),Enum.Material.Metal,true)
+local bs=P(bus,"Sign",Vector3.new(10,2,.3),bcf*CFrame.new(0,14.1,-32.15),Color3.fromRGB(244,205,57),nil,false);TXT(bs,"SCHOOL BUS",Color3.fromRGB(35,36,35),Enum.NormalId.Front)
 
--- moving truck opposite the bus
-local truck=model(root,"MovingTruck")
-local tcf=CFrame.new(19,0,10)*CFrame.Angles(0,math.rad(-8),0)
-part(truck,"Cargo",Vector3.new(19,15,42),tcf*CFrame.new(0,8.2,8),Color3.fromRGB(221,221,211),Enum.Material.Metal,true)
-part(truck,"CargoStripe",Vector3.new(19.2,2.3,42.2),tcf*CFrame.new(0,8.3,8),Color3.fromRGB(62,157,171),Enum.Material.Metal,false)
-part(truck,"Cab",Vector3.new(18,11.5,17),tcf*CFrame.new(0,6,-21),Color3.fromRGB(190,66,51),Enum.Material.Metal,true)
-glass(truck,"Windshield",Vector3.new(14,.4,5.5),tcf*CFrame.new(0,9.5,-29.55)*CFrame.Angles(math.rad(90),0,0))
-for _,x in ipairs({-8.1,8.1}) do for _,z in ipairs({-13,18}) do wheel(truck,tcf*CFrame.new(x,2.3,z)*CFrame.Angles(0,0,math.rad(90))) end end
+local truck=M(root,"MovingTruck")
+local tcf=CFrame.new(14,0,11)*CFrame.Angles(0,math.rad(-4),0)
+P(truck,"Cargo",Vector3.new(18,13.5,37),tcf*CFrame.new(0,8,8),Color3.fromRGB(205,207,201),Enum.Material.Metal,true)
+P(truck,"Stripe",Vector3.new(18.2,2,37.2),tcf*CFrame.new(0,8.6,8),Color3.fromRGB(67,148,163),Enum.Material.Metal,false)
+P(truck,"CabLower",Vector3.new(17,5.5,15),tcf*CFrame.new(0,4.5,-18),Color3.fromRGB(172,61,49),Enum.Material.Metal,true)
+W(truck,"CabHood",Vector3.new(17,6,10),tcf*CFrame.new(0,8,-21.5)*CFrame.Angles(0,math.pi,0),Color3.fromRGB(183,66,53),Enum.Material.Metal,true)
+G(truck,"Windshield",Vector3.new(13.5,4,.3),tcf*CFrame.new(0,9.4,-26.6),Color3.fromRGB(43,63,68))
+for _,x in ipairs({-7.6,7.6})do for _,z in ipairs({-12,17})do wheel(truck,tcf*CFrame.new(x,2.3,z)*CFrame.Angles(0,0,math.rad(90)))end end
+P(truck,"RearBumper",Vector3.new(18.5,1.2,1.5),tcf*CFrame.new(0,2.8,27.2),Color3.fromRGB(86,88,87),Enum.Material.Metal,true)
 
--- retro cars
+-- small retro cars near each house
 local function car(name,cf,color)
-	local m=model(root,name);part(m,"Body",Vector3.new(10,3,20),cf*CFrame.new(0,2,0),color,Enum.Material.Metal,true)
-	glass(m,"Cabin",Vector3.new(8,3.2,10),cf*CFrame.new(0,4.4,0));
-	for _,x in ipairs({-4.8,4.8}) do for _,z in ipairs({-6,6}) do wheel(m,cf*CFrame.new(x,1.6,z)*CFrame.Angles(0,0,math.rad(90))) end end
+	local m=M(root,name)
+	P(m,"Body",Vector3.new(9,2.8,18),cf*CFrame.new(0,2.1,0),color,Enum.Material.Metal,true)
+	W(m,"Hood",Vector3.new(8.5,3.5,6),cf*CFrame.new(0,3.7,-6.5)*CFrame.Angles(0,math.pi,0),color,Enum.Material.Metal,true)
+	G(m,"Cab",Vector3.new(7.2,3.2,7.4),cf*CFrame.new(0,4.7,1),Color3.fromRGB(46,69,74))
+	for _,x in ipairs({-4.2,4.2})do for _,z in ipairs({-5.5,5.5})do wheel(m,cf*CFrame.new(x,1.6,z)*CFrame.Angles(0,0,math.rad(90)))end end
 end
-car("BlueFutureCar",CFrame.new(29,0,-65)*CFrame.Angles(0,math.rad(-8),0),Color3.fromRGB(72,194,197))
-car("RedFutureCar",CFrame.new(-31,0,66)*CFrame.Angles(0,math.rad(8),0),Color3.fromRGB(211,88,63))
+car("BlueFutureCar",CFrame.new(27,0,-58)*CFrame.Angles(0,math.rad(-7),0),Color3.fromRGB(72,165,170))
+car("RedFutureCar",CFrame.new(-27,0,58)*CFrame.Angles(0,math.rad(7),0),Color3.fromRGB(184,77,61))
 
--- Nuketown sign and population counter
-part(root,"SignPost",Vector3.new(2,19,2),CFrame.new(92,9.5,-136),Color3.fromRGB(79,72,61),Enum.Material.Metal,true)
-local sign=part(root,"NuketownSign",Vector3.new(34,13,1.2),CFrame.new(92,20,-136),Color3.fromRGB(207,72,55),Enum.Material.Metal,false)
-textFace(sign,"NUKETOWN\n2025",Color3.fromRGB(255,238,196),Enum.NormalId.Front)
-local pop=part(root,"Population",Vector3.new(28,5.2,1.25),CFrame.new(92,10.2,-136),Color3.fromRGB(47,54,57),Enum.Material.Metal,false)
-textFace(pop,"POPULATION  00",Color3.fromRGB(100,232,213),Enum.NormalId.Front)
+-- iconic roadside sign
+P(root,"SignPost",Vector3.new(1.6,16,1.6),CFrame.new(90,8,-132),Color3.fromRGB(71,67,61),Enum.Material.Metal,true)
+local sign=P(root,"NuketownSign",Vector3.new(31,11,1),CFrame.new(90,18,-132),Color3.fromRGB(190,68,54),Enum.Material.Metal,false);TXT(sign,"NUKETOWN\n2025",Color3.fromRGB(246,230,191),Enum.NormalId.Front)
+local pop=P(root,"Population",Vector3.new(25,4.3,1),CFrame.new(90,9,-132),Color3.fromRGB(48,53,55),Enum.Material.Metal,false);TXT(pop,"POPULATION  00",Color3.fromRGB(104,210,194),Enum.NormalId.Front)
 
--- doomsday clock tower
-local tower=model(root,"DoomsdayClock")
-for _,x in ipairs({-6,6}) do part(tower,"Leg",Vector3.new(1.5,48,1.5),CFrame.new(-110+x,24,-16)*CFrame.Angles(0,0,math.rad(x>0 and -8 or 8)),Color3.fromRGB(92,96,95),Enum.Material.Metal,true) end
-for y=8,44,8 do part(tower,"Brace",Vector3.new(15,.9,.9),CFrame.new(-110,y,-16),Color3.fromRGB(92,96,95),Enum.Material.Metal,true) end
-local clock=part(tower,"ClockFace",Vector3.new(17,17,1.4),CFrame.new(-110,52,-16),Color3.fromRGB(235,228,201),nil,false);textFace(clock,"11:59",Color3.fromRGB(45,47,45),Enum.NormalId.Front)
+-- test clock tower on opposite side
+local tw=M(root,"DoomsdayClock")
+for _,x in ipairs({-5,5})do P(tw,"Leg",Vector3.new(1.3,39,1.3),CFrame.new(-93+x,19.5,-7)*CFrame.Angles(0,0,math.rad(x>0 and -8 or 8)),Color3.fromRGB(86,89,88),Enum.Material.Metal,true)end
+for y=7,35,7 do P(tw,"Brace",Vector3.new(13,.8,.8),CFrame.new(-93,y,-7),Color3.fromRGB(86,89,88),Enum.Material.Metal,true)end
+local face=P(tw,"ClockFace",Vector3.new(14,14,1),CFrame.new(-93,42,-7),Color3.fromRGB(226,220,194),nil,false);TXT(face,"11:59",Color3.fromRGB(44,45,43),Enum.NormalId.Front)
 
--- poles + wires
-local polePositions={{-84,-124},{-84,-52},{-84,52},{-84,124},{84,-124},{84,124}}
-for _,v in ipairs(polePositions) do
-	part(root,"PowerPole",Vector3.new(1.3,28,1.3),CFrame.new(v[1],14,v[2]),Color3.fromRGB(92,75,56),Enum.Material.Wood,true)
-	part(root,"Crossarm",Vector3.new(12,.8,.8),CFrame.new(v[1],25,v[2]),Color3.fromRGB(92,75,56),Enum.Material.Wood,true)
-end
-local function wire(a,b)
-	local d=b-a;local p=part(root,"PowerLine",Vector3.new(.18,.18,d.Magnitude),CFrame.lookAt((a+b)/2,b),Color3.fromRGB(38,38,38),Enum.Material.Metal,false);return p
-end
-wire(Vector3.new(-84,25,-124),Vector3.new(-84,25,-52));wire(Vector3.new(-84,25,-52),Vector3.new(-84,25,52));wire(Vector3.new(-84,25,52),Vector3.new(-84,25,124))
+-- utility poles and simple wires
+for _,z in ipairs({-122,-55,55,122})do P(root,"PowerPole",Vector3.new(1.1,25,1.1),CFrame.new(-72,12.5,z),Color3.fromRGB(88,72,55),Enum.Material.Wood,true);P(root,"Crossarm",Vector3.new(10,.65,.65),CFrame.new(-72,22,z),Color3.fromRGB(88,72,55),Enum.Material.Wood,true)end
+local function wire(a,b)local d=b-a;return P(root,"Wire",Vector3.new(.12,.12,d.Magnitude),CFrame.lookAt((a+b)/2,b),Color3.fromRGB(40,40,40),Enum.Material.Metal,false)end
+wire(Vector3.new(-72,22,-122),Vector3.new(-72,22,-55));wire(Vector3.new(-72,22,-55),Vector3.new(-72,22,55));wire(Vector3.new(-72,22,55),Vector3.new(-72,22,122))
 
--- mannequins
+-- mannequins, intentionally simple but correctly scaled
 local function mannequin(x,z,rot,shirt)
-	local m=model(root,"Mannequin");local cf=CFrame.new(x,0,z)*CFrame.Angles(0,math.rad(rot),0)
-	part(m,"Torso",Vector3.new(2.2,3.2,1.2),cf*CFrame.new(0,4.6,0),shirt,nil,false)
-	local head=part(m,"Head",Vector3.new(1.7,1.7,1.7),cf*CFrame.new(0,7,0),Color3.fromRGB(223,195,162),nil,false);head.Shape=Enum.PartType.Ball
-	for _,sx in ipairs({-.62,.62}) do part(m,"Leg",Vector3.new(.76,3.1,.76),cf*CFrame.new(sx,1.55,0),Color3.fromRGB(59,64,71),nil,false) end
+	local m=M(root,"Mannequin");local cf=CFrame.new(x,0,z)*CFrame.Angles(0,math.rad(rot),0)
+	P(m,"Torso",Vector3.new(1.9,2.9,1),cf*CFrame.new(0,4.2,0),shirt,nil,false)
+	local h=P(m,"Head",Vector3.new(1.45,1.45,1.45),cf*CFrame.new(0,6.3,0),Color3.fromRGB(219,194,164),nil,false);h.Shape=Enum.PartType.Ball
+	for _,sx in ipairs({-.52,.52})do P(m,"Leg",Vector3.new(.64,2.8,.64),cf*CFrame.new(sx,1.4,0),Color3.fromRGB(65,69,73),nil,false)end
 end
-for _,d in ipairs({{-74,-131,20,Color3.fromRGB(82,153,189)},{73,-122,-25,Color3.fromRGB(214,108,75)},{-77,128,150,Color3.fromRGB(163,101,177)},{72,132,205,Color3.fromRGB(91,168,111)},{-44,-48,50,Color3.fromRGB(222,168,72)},{48,51,-65,Color3.fromRGB(77,145,189)}}) do mannequin(table.unpack(d)) end
+for _,d in ipairs({{-66,-123,20,Color3.fromRGB(91,140,166)},{67,-119,-25,Color3.fromRGB(187,100,73)},{-69,120,150,Color3.fromRGB(145,103,160)},{66,125,205,Color3.fromRGB(91,150,103)},{-44,-44,50,Color3.fromRGB(190,148,69)},{46,46,-65,Color3.fromRGB(76,128,165)}})do mannequin(table.unpack(d))end
 
--- distant test-site walls/mountains so the map does not fall off into empty baseplate
-for _,v in ipairs({{-210,0,-150},{205,0,-145},{-205,0,155},{210,0,150}}) do
-	part(root,"DistantRock",Vector3.new(95,38,44),CFrame.new(v[1],18,v[3])*CFrame.Angles(0,math.rad(v[1]>0 and 18 or -18),math.rad(8)),Color3.fromRGB(152,128,97),Enum.Material.Sandstone,true)
+-- low-profile desert perimeter instead of giant rectangular rocks.
+for _,v in ipairs({{-168,-135,18},{165,-132,-16},{-170,137,-20},{168,135,15}})do
+	W(root,"DistantHill",Vector3.new(70,24,55),CFrame.new(v[1],11,v[2])*CFrame.Angles(0,math.rad(v[3]),0),Color3.fromRGB(147,123,92),Enum.Material.Sandstone,true)
 end
 
--- Dedicated spawn markers. Zombie core V3.3 reads these and chooses a marker 30-105 studs from the host.
+-- Dedicated zombie spawn lanes around the actual playable perimeter.
 local spawnFolder=Instance.new("Folder");spawnFolder.Name="NuketownZombieSpawns";spawnFolder.Parent=workspace
 local markerPositions={
-	Vector3.new(-42,.7,-145),Vector3.new(0,.7,-150),Vector3.new(42,.7,-145),
-	Vector3.new(-76,.7,-82),Vector3.new(76,.7,-82),Vector3.new(-78,.7,-38),Vector3.new(78,.7,-38),
-	Vector3.new(-78,.7,38),Vector3.new(78,.7,38),Vector3.new(-76,.7,82),Vector3.new(76,.7,82),
-	Vector3.new(-42,.7,145),Vector3.new(0,.7,150),Vector3.new(42,.7,145)
+	Vector3.new(-35,.7,-142),Vector3.new(0,.7,-145),Vector3.new(35,.7,-142),
+	Vector3.new(-76,.7,-88),Vector3.new(76,.7,-88),Vector3.new(-78,.7,-42),Vector3.new(78,.7,-42),
+	Vector3.new(-78,.7,42),Vector3.new(78,.7,42),Vector3.new(-76,.7,88),Vector3.new(76,.7,88),
+	Vector3.new(-35,.7,142),Vector3.new(0,.7,145),Vector3.new(35,.7,142)
 }
-for i,pos in ipairs(markerPositions) do
-	local m=part(spawnFolder,"Spawn"..i,Vector3.new(5,.25,5),CFrame.new(pos),Color3.new(1,0,0),Enum.Material.SmoothPlastic,false)
-	m.Transparency=1;m.CanQuery=false
-end
+for i,pos in ipairs(markerPositions)do local m=P(spawnFolder,"Spawn"..i,Vector3.new(4,.2,4),CFrame.new(pos),Color3.new(1,0,0),Enum.Material.SmoothPlastic,false);m.Transparency=1;m.CanQuery=false end
 
-local spawn=Instance.new("SpawnLocation");spawn.Name="NuketownSpawn";spawn.Size=Vector3.new(12,1,12);spawn.CFrame=CFrame.new(0,1,146);spawn.Transparency=1;spawn.CanCollide=false;spawn.Anchored=true;spawn.Neutral=true;spawn.Duration=0;spawn.Parent=root
-local function movePlayer(p)
-	local hrp=p.Character and p.Character:FindFirstChild("HumanoidRootPart")
-	if hrp then hrp.CFrame=CFrame.new(0,4,143)*CFrame.Angles(0,math.rad(180),0) end
-end
-Players.PlayerAdded:Connect(function(p)p.CharacterAdded:Connect(function()task.wait(.45);movePlayer(p)end)end)
-for _,p in ipairs(Players:GetPlayers()) do if p.Character then task.defer(movePlayer,p) end;p.CharacterAdded:Connect(function()task.wait(.45);movePlayer(p)end) end
+local spawn=Instance.new("SpawnLocation");spawn.Name="NuketownSpawn";spawn.Size=Vector3.new(10,1,10);spawn.CFrame=CFrame.new(0,1,136);spawn.Transparency=1;spawn.CanCollide=false;spawn.Anchored=true;spawn.Neutral=true;spawn.Duration=0;spawn.Parent=root
+local function movePlayer(p)local hrp=p.Character and p.Character:FindFirstChild("HumanoidRootPart");if hrp then hrp.CFrame=CFrame.new(0,4,133)*CFrame.Angles(0,math.rad(180),0)end end
+Players.PlayerAdded:Connect(function(p)p.CharacterAdded:Connect(function()task.wait(.4);movePlayer(p)end)end)
+for _,p in ipairs(Players:GetPlayers())do if p.Character then task.defer(movePlayer,p)end;p.CharacterAdded:Connect(function()task.wait(.4);movePlayer(p)end)end
 
-print("[NUKETOWN 2025 V3] READY - rebuilt houses, center vehicles, landmarks, spawn lanes")
+print("[NUKETOWN 2025 V4] READY - tighter classic layout + rebuilt visual pass")
