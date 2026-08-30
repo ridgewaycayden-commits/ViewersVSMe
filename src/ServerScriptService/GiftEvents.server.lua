@@ -1,7 +1,6 @@
 -- GiftEvents.server.lua
--- VIEWERS VS ME - BIG GIFT EVENT SYSTEM V1.2
--- Paired TikTok gifts: each tier has one HELP gift and one AGAINST gift.
--- Future live bridge: fire ServerStorage.ViewersVsMeGiftDispatch(giftName, sender, count).
+-- VIEWERS VS ME - BIG GIFT EVENT SYSTEM V1.3
+-- Paired TikTok gifts: each price tier has one HELP gift and one AGAINST gift.
 
 local Players=game:GetService("Players")
 local ReplicatedStorage=game:GetService("ReplicatedStorage")
@@ -18,19 +17,16 @@ local function bindable(name)
  local b=ServerStorage:FindFirstChild(name);if b and not b:IsA("BindableEvent") then b:Destroy();b=nil end
  if not b then b=Instance.new("BindableEvent");b.Name=name;b.Parent=ServerStorage end;return b
 end
-
 local fxRemote=remote("GiftFX")
 local debugRemote=remote("GiftDebug")
 local dispatch=bindable("ViewersVsMeGiftDispatch")
 local spawnRequest=bindable("GiftSpawnRequest")
 local enemies=workspace:WaitForChild("TikTokEnemies")
-
 local function host() return Players:GetPlayers()[1] end
 local function character() local p=host();return p and p.Character end
 local function humanoid() local c=character();return c and c:FindFirstChildOfClass("Humanoid") end
 local function root() local c=character();return c and c:FindFirstChild("HumanoidRootPart") end
 local function announce(side,title,subtitle,color) fxRemote:FireAllClients({kind="announce",side=side,title=title,subtitle=subtitle,color=color}) end
-
 local function setGiftWeapon(weapon,duration,sender,label)
  local p=host();if not p then return end;duration=duration or 90
  local expires=workspace:GetServerTimeNow()+duration;p:SetAttribute("GiftWeapon",weapon);p:SetAttribute("GiftWeaponUntil",expires)
@@ -49,9 +45,9 @@ local function freezeZombies(duration,sender)
  local saved={};for _,m in ipairs(enemies:GetChildren())do local h=m:FindFirstChildOfClass("Humanoid");if h and h.Health>0 then saved[h]=h.WalkSpeed;h.WalkSpeed=0 end end
  announce("HELP","TIME FREEZE","@"..sender.." froze the horde",Color3.fromRGB(120,230,255));fxRemote:FireAllClients({kind="freeze",duration=duration});task.delay(duration,function()for h,s in pairs(saved)do if h.Parent and h.Health>0 then h.WalkSpeed=s end end end)
 end
-local function wipeNormal(sender)
+local function wipeNormal(sender,label)
  local removed=0;for _,m in ipairs(enemies:GetChildren())do local h=m:FindFirstChildOfClass("Humanoid");if h and h.Health>0 and not m:GetAttribute("Boss")then h.Health=0;removed+=1 end end
- announce("HELP","AIRSTRIKE","@"..sender.." wiped "..removed.." infected",Color3.fromRGB(255,210,70));fxRemote:FireAllClients({kind="airstrike"})
+ announce("HELP",label or "AIRSTRIKE","@"..sender.." wiped "..removed.." infected",Color3.fromRGB(255,210,70));fxRemote:FireAllClients({kind="airstrike"})
 end
 local function damagePlayer(amount,sender,label)
  local h=humanoid();if h then h:TakeDamage(amount)end;announce("AGAINST",label or "VIEWER ATTACK","@"..sender.." hit you for "..amount.." damage",Color3.fromRGB(255,70,70));fxRemote:FireAllClients({kind="damage",amount=amount})
@@ -62,7 +58,6 @@ end
 local function bossHorde(sender,count,title)
  spawnRequest:Fire(sender,count,true);announce("AGAINST",title or "TITAN DEPLOYED","@"..sender.." spawned a Titan + "..count.." infected",Color3.fromRGB(255,65,45))
 end
-
 local blackoutSerial=0
 local function blackout(duration,sender,label)
  blackoutSerial+=1;local serial=blackoutSerial;local oldB=Lighting.Brightness;local oldE=Lighting.ExposureCompensation;local oldA=Lighting.Ambient;local oldO=Lighting.OutdoorAmbient
@@ -77,22 +72,32 @@ local function meteor(sender)
  task.delay(2.2,function()local h=humanoid();local rr=root();if h and rr and(rr.Position-target).Magnitude<11 then h:TakeDamage(35)end;local blast=Instance.new("Explosion");blast.Position=target;blast.BlastRadius=14;blast.BlastPressure=0;blast.DestroyJointRadiusPercent=0;blast.Parent=workspace end)
 end
 
--- Three clean viewer choice tiers:
--- Rose HELP vs Chilli AGAINST
--- Love You HELP vs Night Star AGAINST
--- Galaxy HELP vs Giraffe AGAINST
 local Gifts={
+ -- Existing tiers
  ["Rose"]={side="HELP",action=function(s)heal(10,s,"ROSE HEAL")end},
  ["Chilli"]={side="AGAINST",action=function(s)horde(s,3,"CHILLI HORDE")end},
  ["Love You"]={side="HELP",action=function(s)heal(25,s,"LOVE YOU BOOST");setGiftWeapon("Pistol",90,s,"HANDGUN DROP")end},
  ["Night Star"]={side="AGAINST",action=function(s)blackout(8,s,"NIGHT STAR BLACKOUT");horde(s,6,"NIGHT STAR HORDE")end},
  ["Galaxy"]={side="HELP",action=function(s)setGiftWeapon("Minigun",90,s,"GALAXY MINIGUN");shield(8,s,"GALAXY SHIELD")end},
  ["Giraffe"]={side="AGAINST",action=function(s)bossHorde(s,8,"GIRAFFE TITAN")end},
+
+ -- 20 coins: small but noticeable
+ ["Perfume"]={side="HELP",action=function(s)heal(20,s,"PERFUME MEDKIT")end},
+ ["G.O.A.T Busker"]={side="AGAINST",action=function(s)damagePlayer(12,s,"BUSKER HIT");horde(s,2,"BUSKER BACKUP")end},
+
+ -- 500 coins: major swing
+ ["Manifesting"]={side="HELP",action=function(s)heal(45,s,"MANIFESTING BOOST");freezeZombies(8,s);setGiftWeapon("Rifle",90,s,"AK47 DROP")end},
+ ["Star Map Polaris"]={side="AGAINST",action=function(s)blackout(10,s,"POLARIS BLACKOUT");horde(s,10,"POLARIS HORDE")end},
+
+ -- 1,200 coins: high-impact pair
+ ["Travel The US"]={side="HELP",action=function(s)wipeNormal(s,"TRAVEL THE US AIRSTRIKE");heal(75,s,"TRAVEL THE US HEAL");shield(12,s,"TRAVEL THE US SHIELD")end},
+ ["Bunny DJ"]={side="AGAINST",action=function(s)bossHorde(s,12,"BUNNY DJ TITAN");meteor(s)end},
+
+ -- Legacy compatibility while the remaining gifts are reorganized into pairs.
  ["Heart Me"]={side="HELP",action=function(s)setGiftWeapon("SMG",90,s)end},
  ["Hand Hearts"]={side="HELP",action=function(s)heal(30,s);setGiftWeapon("Shotgun",90,s,"HANDGUN DROP")end},
  ["Interstellar"]={side="HELP",action=function(s)freezeZombies(7,s);setGiftWeapon("Rifle",90,s)end},
  ["Phoenix"]={side="HELP",action=function(s)wipeNormal(s);heal(60,s)end},
- ["Perfume"]={side="AGAINST",action=function(s)damagePlayer(8,s,"POISON CLOUD")end},
  ["Sports Car"]={side="AGAINST",action=function(s)horde(s,8,"HORDE DROP")end},
  ["Lion"]={side="AGAINST",action=function(s)bossHorde(s,6,"THE LION BOSS")end},
  ["TikTok Universe"]={side="AGAINST",action=function(s)blackout(12,s);horde(s,16,"UNIVERSE HORDE")end},
@@ -105,4 +110,4 @@ local function processGift(name,sender,count)
 end
 dispatch.Event:Connect(processGift)
 debugRemote.OnServerEvent:Connect(function(player,giftName)if player==host()then processGift(giftName,"TEST_VIEWER",1)end end)
-print("BIG GIFT EVENTS V1.2 READY - Rose/Chilli, Love You/Night Star, Galaxy/Giraffe tiers")
+print("BIG GIFT EVENTS V1.3 READY - paired tiers through 1200 coins")
