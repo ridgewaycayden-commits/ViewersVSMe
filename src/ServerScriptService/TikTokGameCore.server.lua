@@ -1,6 +1,6 @@
 -- TikTokGameCore.server.lua
--- VIEWERS VS ME - ZOMBIE CORE V3.3
--- Nuketown-aware perimeter spawns, smooth emergence, path chase, gift/test hordes, occluded viewer tags.
+-- VIEWERS VS ME - ZOMBIE CORE V3.4
+-- City Fight ground-level spawns, smooth emergence, path chase, gift/test hordes, occluded viewer tags.
 
 local Players=game:GetService("Players")
 local ReplicatedStorage=game:GetService("ReplicatedStorage")
@@ -40,61 +40,72 @@ local overlapParams=OverlapParams.new();overlapParams.FilterType=Enum.RaycastFil
 
 local function groundAt(raw)
 	rayParams.FilterDescendantsInstances={enemies,hostCharacter()}
-	local hit=workspace:Raycast(raw+Vector3.new(0,55,0),Vector3.new(0,-120,0),rayParams)
-	if not hit or hit.Normal.Y<.7 then return nil end
+	local hit=workspace:Raycast(raw+Vector3.new(0,70,0),Vector3.new(0,-160,0),rayParams)
+	if not hit or hit.Normal.Y<.72 then return nil end
 	return hit.Position,hit.Instance
 end
 
 local function openOutdoorSpot(pos,groundPart)
 	overlapParams.FilterDescendantsInstances={enemies,hostCharacter(),groundPart}
-	for _,p in ipairs(workspace:GetPartBoundsInBox(CFrame.new(pos+Vector3.new(0,3.1,0)),Vector3.new(5,6.2,5),overlapParams)) do
+	for _,p in ipairs(workspace:GetPartBoundsInBox(CFrame.new(pos+Vector3.new(0,3.2,0)),Vector3.new(6,6.4,6),overlapParams)) do
 		if p:IsA("BasePart") and p.CanCollide and p.Transparency<.95 then return false end
 	end
 	rayParams.FilterDescendantsInstances={enemies,hostCharacter(),groundPart}
-	local roof=workspace:Raycast(pos+Vector3.new(0,1.5,0),Vector3.new(0,18,0),rayParams)
+	local roof=workspace:Raycast(pos+Vector3.new(0,1.5,0),Vector3.new(0,20,0),rayParams)
 	return not (roof and roof.Instance and roof.Instance.CanCollide)
 end
 
-local function shuffled(t)
-	for i=#t,2,-1 do local j=rng:NextInteger(1,i);t[i],t[j]=t[j],t[i] end
-	return t
-end
-
-local function nuketownCandidates(origin)
-	local folder=workspace:FindFirstChild("NuketownZombieSpawns")
-	if not folder then return {} end
-	local list={}
-	for _,m in ipairs(folder:GetChildren()) do
-		if m:IsA("BasePart") then
-			local flat=(Vector3.new(m.Position.X,origin.Y,m.Position.Z)-origin).Magnitude
-			-- Far enough to feel like an attack, close enough to enter combat quickly.
-			if flat>=30 and flat<=115 then table.insert(list,m.Position) end
+-- Reject car roofs, crates, awnings and building roofs by checking that the candidate
+-- sits near the player's street level and has a broad, flat patch around it.
+local function isStreetLevelSpot(pos,groundPart,origin)
+	if math.abs(pos.Y-origin.Y)>7 then return false end
+	if groundPart and groundPart:IsA("BasePart") then
+		local n=string.lower(groundPart.Name)
+		if n:find("roof") or n:find("car") or n:find("truck") or n:find("crate") or n:find("container") or n:find("awning") or n:find("table") or n:find("bench") then
+			return false
 		end
 	end
-	return shuffled(list)
+
+	local offsets={Vector3.new(3.2,0,0),Vector3.new(-3.2,0,0),Vector3.new(0,0,3.2),Vector3.new(0,0,-3.2)}
+	for _,off in ipairs(offsets) do
+		local near=select(1,groundAt(pos+off))
+		if not near or math.abs(near.Y-pos.Y)>1.4 then return false end
+	end
+	return true
+end
+
+local function reachableFromPlayer(pos,origin)
+	local path=PathfindingService:CreatePath({AgentRadius=2.1,AgentHeight=5.2,AgentCanJump=true,WaypointSpacing=5})
+	local ok=pcall(function() path:ComputeAsync(pos+Vector3.new(0,3,0),origin) end)
+	return ok and path.Status==Enum.PathStatus.Success
 end
 
 local function chooseSpawnPoint()
 	local char=hostCharacter();local root=char and char:FindFirstChild("HumanoidRootPart")
 	local origin=root and root.Position or Vector3.zero
 
-	-- Nuketown V3 owns its spawn lanes. This prevents zombies appearing inside houses,
-	-- under the bus/truck, or way out in the desert.
-	for _,raw in ipairs(nuketownCandidates(origin)) do
-		local ground,groundPart=groundAt(raw)
-		if ground and openOutdoorSpot(ground,groundPart) then return ground end
-	end
-
-	-- Generic fallback for other maps.
-	for _=1,60 do
+	-- City Fight: only accept broad, clear, street-level surfaces that can path to the player.
+	for _=1,120 do
 		local angle=rng:NextNumber(0,math.pi*2)
-		local radius=rng:NextNumber(32,72)
+		local radius=rng:NextNumber(35,85)
 		local raw=origin+Vector3.new(math.cos(angle)*radius,0,math.sin(angle)*radius)
 		local ground,groundPart=groundAt(raw)
-		if ground and openOutdoorSpot(ground,groundPart) then return ground end
+		if ground and openOutdoorSpot(ground,groundPart) and isStreetLevelSpot(ground,groundPart,origin) and reachableFromPlayer(ground,origin) then
+			return ground
+		end
 	end
-	local g=select(1,groundAt(origin+Vector3.new(0,0,-42)))
-	return g or origin+Vector3.new(0,0,-42)
+
+	-- Tighter emergency search if the map is crowded.
+	for _=1,80 do
+		local angle=rng:NextNumber(0,math.pi*2)
+		local radius=rng:NextNumber(24,50)
+		local raw=origin+Vector3.new(math.cos(angle)*radius,0,math.sin(angle)*radius)
+		local ground,groundPart=groundAt(raw)
+		if ground and openOutdoorSpot(ground,groundPart) and isStreetLevelSpot(ground,groundPart,origin) then return ground end
+	end
+
+	local g=select(1,groundAt(origin+Vector3.new(0,0,-30)))
+	return g or origin+Vector3.new(0,0,-30)
 end
 
 local palettes={
@@ -227,4 +238,4 @@ attackRemote.OnServerEvent:Connect(function(player,target,weapon)
 	if not h or not r or not pr or h.Health<=0 or model:GetAttribute("Dead") then return end;if (pr.Position-r.Position).Magnitude>cfg.range+8 then return end;h:TakeDamage(cfg.damage)
 end)
 
-print("ZOMBIE CORE V3.3 READY - Nuketown spawn lanes + reliable outdoor hordes")
+print("ZOMBIE CORE V3.4 READY - City Fight ground-level spawn filtering")
