@@ -1,6 +1,6 @@
 -- GiftWeaponBindings.server.lua
--- VIEWERS VS ME - maps TikTok gifts to the imported weapon models used by AutoCombat V2.8.
--- Existing GiftEvents still handles healing, bosses, hordes, shields, etc.; this script owns the weapon choice.
+-- VIEWERS VS ME - maps TikTok gifts to imported weapon models and owns the shared gift-gun timer.
+-- Any new gift refreshes an active gift gun to 90 seconds. If gifts stop, the gun expires and AutoCombat falls back to Knife.
 
 local Players=game:GetService("Players")
 local ReplicatedStorage=game:GetService("ReplicatedStorage")
@@ -13,52 +13,60 @@ end
 local dispatch=ServerStorage:WaitForChild("ViewersVsMeGiftDispatch")
 local debugRemote=ReplicatedStorage:WaitForChild("GiftDebug")
 
--- Logical weapon names map to these imported assets inside AutoCombat:
--- Pistol -> Handgun
--- Rifle -> AK47
--- SMG -> HyperlaserGun
--- Shotgun -> RocketLauncher
--- Minigun -> Minigun
--- Sword -> Knife (automatic close-range melee)
+local GUN_LIFETIME=90
+
+-- Logical weapon names used by AutoCombat.
 local GiftWeapons={
-	["Rose"]={weapon="Pistol",duration=10},
-	["Heart Me"]={weapon="Rifle",duration=16},
-	["Hand Hearts"]={weapon="Shotgun",duration=20},
-	["Galaxy"]={weapon="Minigun",duration=28},
-	["Interstellar"]={weapon="SMG",duration=30},
-	["Phoenix"]={weapon="Shotgun",duration=24},
+	["Rose"]="Pistol",
+	["Heart Me"]="Rifle",
+	["Hand Hearts"]="Shotgun", -- visually uses the Handgun model
+	["Galaxy"]="Minigun",
+	["Interstellar"]="SMG",
+	["Phoenix"]="Shotgun", -- visually uses the Handgun model
+	["Castle Fantasy"]="Minigun",
 }
 
 local serial=0
 
-local function applyGiftWeapon(giftName,sender,count)
-	local cfg=GiftWeapons[tostring(giftName or "")]
-	if not cfg then return end
+local function processGift(giftName,sender,count)
 	local p=host();if not p then return end
-	count=math.max(1,tonumber(count) or 1)
-	local duration=cfg.duration + math.min(count-1,5)*3
+	giftName=tostring(giftName or "")
+	local mapped=GiftWeapons[giftName]
 
-	-- Run just after GiftEvents so this mapping is the final weapon selection.
-	task.delay(.05,function()
+	-- Run after the other gift scripts so this becomes the final weapon/timer state.
+	task.delay(.06,function()
 		if not p.Parent then return end
 		serial+=1
 		local mySerial=serial
-		p:SetAttribute("GiftWeapon",cfg.weapon)
-		p:SetAttribute("GiftWeaponUntil",workspace:GetServerTimeNow()+duration)
-		print("TIKTOK GIFT WEAPON:",giftName,"from",sender,"->",cfg.weapon,"for",duration,"seconds")
-		task.delay(duration+.25,function()
+		local now=workspace:GetServerTimeNow()
+
+		if mapped then
+			p:SetAttribute("GiftWeapon",mapped)
+			p:SetAttribute("GiftWeaponUntil",now+GUN_LIFETIME)
+			print("TIKTOK GIFT WEAPON:",giftName,"from",sender,"->",mapped,"for",GUN_LIFETIME,"seconds")
+		else
+			-- Even a non-weapon gift counts as continued interaction and refreshes the current gift gun.
+			local current=p:GetAttribute("GiftWeapon")
+			local untilTime=tonumber(p:GetAttribute("GiftWeaponUntil")) or 0
+			if type(current)=="string" and current~="" and untilTime>now then
+				p:SetAttribute("GiftWeaponUntil",now+GUN_LIFETIME)
+			end
+		end
+
+		task.delay(GUN_LIFETIME+.3,function()
 			if mySerial~=serial or not p.Parent then return end
-			if (p:GetAttribute("GiftWeaponUntil") or 0)<=workspace:GetServerTimeNow()+.3 then
+			if (tonumber(p:GetAttribute("GiftWeaponUntil")) or 0)<=workspace:GetServerTimeNow()+.35 then
 				p:SetAttribute("GiftWeapon",nil)
 				p:SetAttribute("GiftWeaponUntil",nil)
+				print("GIFT GUN EXPIRED - reverting to Knife")
 			end
 		end)
 	end)
 end
 
-dispatch.Event:Connect(applyGiftWeapon)
+dispatch.Event:Connect(processGift)
 debugRemote.OnServerEvent:Connect(function(player,giftName)
-	if player==host() then applyGiftWeapon(giftName,"TEST_VIEWER",1) end
+	if player==host() then processGift(giftName,"TEST_VIEWER",1) end
 end)
 
-print("GIFT WEAPON BINDINGS READY - TikTok gifts now select imported gun assets")
+print("GIFT WEAPON BINDINGS V2 READY - 90s shared inactivity timer, Knife fallback")
