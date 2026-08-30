@@ -1,5 +1,6 @@
 -- StreamHUD.client.lua
--- VIEWERS VS ME - CINEMATIC FPS HUD V2
+-- VIEWERS VS ME - CINEMATIC FPS HUD V2.1
+-- Clean gameplay HUD. Gift mechanics still run in the background; no TikTok gift legend is shown.
 
 local Players=game:GetService("Players")
 local ReplicatedStorage=game:GetService("ReplicatedStorage")
@@ -33,7 +34,7 @@ local dot=Instance.new("Frame");dot.Size=UDim2.fromOffset(10,10);dot.Position=UD
 text(top,"LIVE",UDim2.fromOffset(31,4),UDim2.fromOffset(70,28),Enum.Font.GothamBlack,19)
 text(top,"VIEWERS VS ME",UDim2.fromOffset(14,34),UDim2.new(1,-28,0,28),Enum.Font.GothamBlack,22)
 local stats=text(top,"KILLS 0  •  ENEMIES 0  •  WAVE 1",UDim2.fromOffset(14,67),UDim2.new(1,-28,0,20),Enum.Font.GothamBold,13,Color3.fromRGB(225,230,240))
-local sub=text(top,"SEND GIFTS TO MAKE IT HARDER",UDim2.fromOffset(14,90),UDim2.new(1,-28,0,18),Enum.Font.GothamMedium,11,Color3.fromRGB(155,165,185))
+text(top,"SURVIVE THE HORDE",UDim2.fromOffset(14,90),UDim2.new(1,-28,0,18),Enum.Font.GothamMedium,11,Color3.fromRGB(155,165,185))
 
 local weapon=panel("WeaponPanel",UDim2.new(0,20,1,-190),UDim2.fromOffset(180,112),.12)
 text(weapon,"CURRENT WEAPON",UDim2.fromOffset(14,10),UDim2.new(1,-28,0,18),Enum.Font.GothamBold,11,Color3.fromRGB(180,188,205))
@@ -57,24 +58,8 @@ for i,n in ipairs(slotNames) do
  text(b,n,UDim2.fromOffset(6,22),UDim2.new(1,-12,0,20),Enum.Font.GothamBold,9,Color3.fromRGB(235,238,245),Enum.TextXAlignment.Center)
 end
 
-local gifts=panel("GiftLegend",UDim2.new(1,-278,1,-342),UDim2.fromOffset(258,250),.12)
-text(gifts,"TIKTOK POWER DROPS",UDim2.fromOffset(14,10),UDim2.new(1,-28,0,24),Enum.Font.GothamBlack,15)
-local rows={
- {"🌹  Rose","Heal +8 HP"},
- {"❤  Heart Me","Drops AK47"},
- {"💕  Hand Hearts","Drops RocketLauncher"},
- {"🌌  Galaxy","Drops Minigun + Shield"},
- {"⭐  Interstellar","Drops HyperlaserGun"},
- {"🔥  Phoenix","Airstrike + Heal"},
-}
-for i,r in ipairs(rows) do
- local y=38+(i-1)*34
- text(gifts,r[1],UDim2.fromOffset(14,y),UDim2.new(1,-28,0,17),Enum.Font.GothamBold,12)
- text(gifts,r[2],UDim2.fromOffset(32,y+15),UDim2.new(1,-46,0,15),Enum.Font.GothamMedium,10,Color3.fromRGB(172,182,198))
-end
-
 local status=panel("StatusPanel",UDim2.new(1,-350,1,-82),UDim2.fromOffset(330,62),.18)
-local status1=text(status,"HUD READY • WAITING FOR EVENTS",UDim2.fromOffset(14,10),UDim2.new(1,-28,0,18),Enum.Font.GothamBlack,12)
+text(status,"HUD READY • WAITING FOR EVENTS",UDim2.fromOffset(14,10),UDim2.new(1,-28,0,18),Enum.Font.GothamBlack,12)
 local status2=text(status,"LIVE EVENT LINK READY",UDim2.fromOffset(14,34),UDim2.new(1,-28,0,18),Enum.Font.GothamBold,11,Color3.fromRGB(190,205,220))
 
 local clean=text(gui,"F10 • CLEAN STREAM",UDim2.new(.5,-90,1,-88),UDim2.fromOffset(180,26),Enum.Font.GothamBold,10,Color3.fromRGB(180,188,202),Enum.TextXAlignment.Center)
@@ -96,7 +81,7 @@ end
 
 local function setClean(on)
  cleanMode=on
- weapon.Visible=not on;vitals.Visible=not on;slots.Visible=not on;gifts.Visible=not on;status.Visible=not on;clean.Visible=not on
+ weapon.Visible=not on;vitals.Visible=not on;slots.Visible=not on;status.Visible=not on;clean.Visible=not on
 end
 UserInputService.InputBegan:Connect(function(i,p)if not p and i.KeyCode==Enum.KeyCode.F10 then setClean(not cleanMode)end end)
 
@@ -139,4 +124,4 @@ if remote then
 else status2.Text="EVENT LINK NOT READY" end
 
 refreshStats()
-print("STREAM HUD V2 READY - cinematic FPS layout + ammo + gifts + health")
+print("STREAM HUD V2.1 READY - clean FPS layout, gift legend removed")
