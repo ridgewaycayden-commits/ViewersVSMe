@@ -1,237 +1,142 @@
 -- StreamHUD.client.lua
--- COMPACT HUD VERSION
--- Put in StarterPlayer > StarterPlayerScripts
+-- VIEWERS VS ME - CINEMATIC FPS HUD V2
 
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
+local Players=game:GetService("Players")
+local ReplicatedStorage=game:GetService("ReplicatedStorage")
+local UserInputService=game:GetService("UserInputService")
+local TweenService=game:GetService("TweenService")
 
-local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
+local player=Players.LocalPlayer
+local playerGui=player:WaitForChild("PlayerGui")
 
-local old = playerGui:FindFirstChild("ViewersVsMeHUD")
+local old=playerGui:FindFirstChild("ViewersVsMeHUD")
 if old then old:Destroy() end
 
-local gui = Instance.new("ScreenGui")
-gui.Name = "ViewersVsMeHUD"
-gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = false
-gui.DisplayOrder = 999
-gui.Parent = playerGui
+local gui=Instance.new("ScreenGui")
+gui.Name="ViewersVsMeHUD"
+gui.ResetOnSpawn=false
+gui.IgnoreGuiInset=false
+gui.DisplayOrder=999
+gui.Parent=playerGui
 
-local function round(obj, px)
-	local c = Instance.new("UICorner")
-	c.CornerRadius = UDim.new(0, px)
-	c.Parent = obj
+local function round(o,r)local c=Instance.new("UICorner");c.CornerRadius=UDim.new(0,r or 10);c.Parent=o end
+local function stroke(o,t,col)local s=Instance.new("UIStroke");s.Thickness=1.2;s.Transparency=t or .75;s.Color=col or Color3.new(1,1,1);s.Parent=o end
+local function text(parent,txt,pos,size,font,ts,color,align)
+ local l=Instance.new("TextLabel");l.BackgroundTransparency=1;l.Position=pos;l.Size=size;l.Font=font or Enum.Font.GothamBold;l.TextSize=ts or 14;l.TextColor3=color or Color3.new(1,1,1);l.Text=txt;l.TextXAlignment=align or Enum.TextXAlignment.Left;l.Parent=parent;return l
+end
+local function panel(name,pos,size,trans)
+ local f=Instance.new("Frame");f.Name=name;f.Position=pos;f.Size=size;f.BackgroundColor3=Color3.fromRGB(8,10,15);f.BackgroundTransparency=trans or .16;f.BorderSizePixel=0;f.Parent=gui;round(f,14);stroke(f,.82);return f
 end
 
-local function stroke(obj, transparency)
-	local s = Instance.new("UIStroke")
-	s.Thickness = 1
-	s.Transparency = transparency or .75
-	s.Color = Color3.fromRGB(255,255,255)
-	s.Parent = obj
+local top=panel("LivePanel",UDim2.fromOffset(18,18),UDim2.fromOffset(305,116),.14)
+local dot=Instance.new("Frame");dot.Size=UDim2.fromOffset(10,10);dot.Position=UDim2.fromOffset(14,15);dot.BackgroundColor3=Color3.fromRGB(255,54,66);dot.BorderSizePixel=0;dot.Parent=top;round(dot,99)
+text(top,"LIVE",UDim2.fromOffset(31,4),UDim2.fromOffset(70,28),Enum.Font.GothamBlack,19)
+text(top,"VIEWERS VS ME",UDim2.fromOffset(14,34),UDim2.new(1,-28,0,28),Enum.Font.GothamBlack,22)
+local stats=text(top,"KILLS 0  •  ENEMIES 0  •  WAVE 1",UDim2.fromOffset(14,67),UDim2.new(1,-28,0,20),Enum.Font.GothamBold,13,Color3.fromRGB(225,230,240))
+local sub=text(top,"SEND GIFTS TO MAKE IT HARDER",UDim2.fromOffset(14,90),UDim2.new(1,-28,0,18),Enum.Font.GothamMedium,11,Color3.fromRGB(155,165,185))
+
+local weapon=panel("WeaponPanel",UDim2.new(0,20,1,-190),UDim2.fromOffset(180,112),.12)
+text(weapon,"CURRENT WEAPON",UDim2.fromOffset(14,10),UDim2.new(1,-28,0,18),Enum.Font.GothamBold,11,Color3.fromRGB(180,188,205))
+local weaponName=text(weapon,"AK47",UDim2.fromOffset(14,28),UDim2.new(1,-28,0,34),Enum.Font.GothamBlack,26)
+local ammoLabel=text(weapon,"30 / 150",UDim2.fromOffset(14,60),UDim2.new(1,-28,0,34),Enum.Font.GothamBlack,29)
+local fireMode=text(weapon,"AR  •  AUTO",UDim2.fromOffset(14,91),UDim2.new(1,-28,0,16),Enum.Font.GothamBold,10,Color3.fromRGB(150,160,180))
+
+local vitals=Instance.new("Frame");vitals.Position=UDim2.new(0,20,1,-66);vitals.Size=UDim2.fromOffset(325,52);vitals.BackgroundTransparency=1;vitals.Parent=gui
+local hpBack=Instance.new("Frame");hpBack.Size=UDim2.fromOffset(300,19);hpBack.Position=UDim2.fromOffset(0,0);hpBack.BackgroundColor3=Color3.fromRGB(70,20,24);hpBack.BorderSizePixel=0;hpBack.Parent=vitals;round(hpBack,6)
+local hpFill=Instance.new("Frame");hpFill.Size=UDim2.fromScale(1,1);hpFill.BackgroundColor3=Color3.fromRGB(215,65,72);hpFill.BorderSizePixel=0;hpFill.Parent=hpBack;round(hpFill,6)
+local hpText=text(hpBack,"100 / 100",UDim2.fromOffset(0,0),UDim2.fromScale(1,1),Enum.Font.GothamBlack,12,Color3.new(1,1,1),Enum.TextXAlignment.Center)
+local shBack=Instance.new("Frame");shBack.Size=UDim2.fromOffset(300,19);shBack.Position=UDim2.fromOffset(0,27);shBack.BackgroundColor3=Color3.fromRGB(24,49,72);shBack.BorderSizePixel=0;shBack.Parent=vitals;round(shBack,6)
+local shFill=Instance.new("Frame");shFill.Size=UDim2.fromScale(0,1);shFill.BackgroundColor3=Color3.fromRGB(78,155,220);shFill.BorderSizePixel=0;shFill.Parent=shBack;round(shFill,6)
+local shText=text(shBack,"0 / 100",UDim2.fromOffset(0,0),UDim2.fromScale(1,1),Enum.Font.GothamBlack,12,Color3.new(1,1,1),Enum.TextXAlignment.Center)
+
+local slots=Instance.new("Frame");slots.AnchorPoint=Vector2.new(.5,1);slots.Position=UDim2.new(.5,0,1,-18);slots.Size=UDim2.fromOffset(560,58);slots.BackgroundTransparency=1;slots.Parent=gui
+local slotNames={"AK47","HANDGUN","KNIFE","MINIGUN","ROCKET","LASER"}
+for i,n in ipairs(slotNames) do
+ local b=Instance.new("Frame");b.Size=UDim2.fromOffset(84,54);b.Position=UDim2.fromOffset((i-1)*94,0);b.BackgroundColor3=Color3.fromRGB(8,10,15);b.BackgroundTransparency=.20;b.BorderSizePixel=0;b.Parent=slots;round(b,9);stroke(b,i==1 and .25 or .82,i==1 and Color3.fromRGB(75,145,255) or Color3.new(1,1,1))
+ text(b,tostring(i),UDim2.fromOffset(5,3),UDim2.fromOffset(16,14),Enum.Font.GothamBlack,10,Color3.fromRGB(220,225,235))
+ text(b,n,UDim2.fromOffset(6,22),UDim2.new(1,-12,0,20),Enum.Font.GothamBold,9,Color3.fromRGB(235,238,245),Enum.TextXAlignment.Center)
 end
 
-local top = Instance.new("Frame")
-top.Size = UDim2.fromOffset(320, 78)
-top.Position = UDim2.fromOffset(18, 18)
-top.BackgroundColor3 = Color3.fromRGB(8,10,15)
-top.BackgroundTransparency = .18
-top.BorderSizePixel = 0
-top.Parent = gui
-round(top, 14)
-stroke(top, .82)
-
-local dot = Instance.new("Frame")
-dot.Size = UDim2.fromOffset(9,9)
-dot.Position = UDim2.fromOffset(13,14)
-dot.BackgroundColor3 = Color3.fromRGB(255,50,65)
-dot.BorderSizePixel = 0
-dot.Parent = top
-round(dot,99)
-
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1,-36,0,26)
-title.Position = UDim2.fromOffset(29,5)
-title.BackgroundTransparency = 1
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.Font = Enum.Font.GothamBlack
-title.TextSize = 18
-title.TextColor3 = Color3.new(1,1,1)
-title.Text = "VIEWERS VS ME • LIVE"
-title.Parent = top
-
-local stats = Instance.new("TextLabel")
-stats.Size = UDim2.new(1,-24,0,22)
-stats.Position = UDim2.fromOffset(12,31)
-stats.BackgroundTransparency = 1
-stats.TextXAlignment = Enum.TextXAlignment.Left
-stats.Font = Enum.Font.GothamBold
-stats.TextSize = 14
-stats.TextColor3 = Color3.fromRGB(228,232,240)
-stats.Text = "KILLS 0   •   ENEMIES 0   •   WAVE 1"
-stats.Parent = top
-
-local sub = Instance.new("TextLabel")
-sub.Size = UDim2.new(1,-24,0,18)
-sub.Position = UDim2.fromOffset(12,53)
-sub.BackgroundTransparency = 1
-sub.TextXAlignment = Enum.TextXAlignment.Left
-sub.Font = Enum.Font.GothamMedium
-sub.TextSize = 11
-sub.TextColor3 = Color3.fromRGB(145,155,175)
-sub.Text = "SEND GIFTS TO MAKE IT HARDER"
-sub.Parent = top
-
-local feed = Instance.new("Frame")
-feed.Size = UDim2.fromOffset(330, 112)
-feed.Position = UDim2.new(1,-348,1,-130)
-feed.BackgroundColor3 = Color3.fromRGB(8,10,15)
-feed.BackgroundTransparency = .28
-feed.BorderSizePixel = 0
-feed.Parent = gui
-round(feed,14)
-stroke(feed,.88)
-
-local pad = Instance.new("UIPadding")
-pad.PaddingTop = UDim.new(0,8)
-pad.PaddingBottom = UDim.new(0,8)
-pad.PaddingLeft = UDim.new(0,10)
-pad.PaddingRight = UDim.new(0,10)
-pad.Parent = feed
-
-local layout = Instance.new("UIListLayout")
-layout.VerticalAlignment = Enum.VerticalAlignment.Bottom
-layout.Padding = UDim.new(0,3)
-layout.Parent = feed
-
-local helper = Instance.new("TextLabel")
-helper.AnchorPoint = Vector2.new(.5,1)
-helper.Position = UDim2.new(.5,0,1,-10)
-helper.Size = UDim2.fromOffset(180,24)
-helper.BackgroundColor3 = Color3.fromRGB(8,10,15)
-helper.BackgroundTransparency = .38
-helper.TextColor3 = Color3.fromRGB(175,185,200)
-helper.Font = Enum.Font.GothamBold
-helper.TextSize = 11
-helper.Text = "F10 • CLEAN STREAM"
-helper.Parent = gui
-round(helper,9)
-
-local banner = Instance.new("TextLabel")
-banner.AnchorPoint = Vector2.new(.5,0)
-banner.Position = UDim2.new(.5,0,0,24)
-banner.Size = UDim2.fromOffset(560,54)
-banner.BackgroundColor3 = Color3.fromRGB(8,10,15)
-banner.BackgroundTransparency = 1
-banner.TextTransparency = 1
-banner.TextColor3 = Color3.new(1,1,1)
-banner.TextStrokeTransparency = .55
-banner.Font = Enum.Font.GothamBlack
-banner.TextSize = 26
-banner.Parent = gui
-round(banner,12)
-
-local kills, active, wave = 0,0,1
-local streamClean = false
-
-local function refresh()
-	stats.Text = ("KILLS %d   •   ENEMIES %d   •   WAVE %d"):format(kills,active,wave)
+local gifts=panel("GiftLegend",UDim2.new(1,-278,1,-342),UDim2.fromOffset(258,250),.12)
+text(gifts,"TIKTOK POWER DROPS",UDim2.fromOffset(14,10),UDim2.new(1,-28,0,24),Enum.Font.GothamBlack,15)
+local rows={
+ {"🌹  Rose","Heal +8 HP"},
+ {"❤  Heart Me","Drops AK47"},
+ {"💕  Hand Hearts","Drops RocketLauncher"},
+ {"🌌  Galaxy","Drops Minigun + Shield"},
+ {"⭐  Interstellar","Drops HyperlaserGun"},
+ {"🔥  Phoenix","Airstrike + Heal"},
+}
+for i,r in ipairs(rows) do
+ local y=38+(i-1)*34
+ text(gifts,r[1],UDim2.fromOffset(14,y),UDim2.new(1,-28,0,17),Enum.Font.GothamBold,12)
+ text(gifts,r[2],UDim2.fromOffset(32,y+15),UDim2.new(1,-46,0,15),Enum.Font.GothamMedium,10,Color3.fromRGB(172,182,198))
 end
 
-local function addFeed(text)
-	local label = Instance.new("TextLabel")
-	label.Size = UDim2.new(1,0,0,22)
-	label.BackgroundTransparency = 1
-	label.TextXAlignment = Enum.TextXAlignment.Left
-	label.TextTruncate = Enum.TextTruncate.AtEnd
-	label.Font = Enum.Font.GothamBold
-	label.TextSize = 12
-	label.TextColor3 = Color3.new(1,1,1)
-	label.Text = text
-	label.Parent = feed
+local status=panel("StatusPanel",UDim2.new(1,-350,1,-82),UDim2.fromOffset(330,62),.18)
+local status1=text(status,"HUD READY • WAITING FOR EVENTS",UDim2.fromOffset(14,10),UDim2.new(1,-28,0,18),Enum.Font.GothamBlack,12)
+local status2=text(status,"LIVE EVENT LINK READY",UDim2.fromOffset(14,34),UDim2.new(1,-28,0,18),Enum.Font.GothamBold,11,Color3.fromRGB(190,205,220))
 
-	local rows = {}
-	for _,v in ipairs(feed:GetChildren()) do
-		if v:IsA("TextLabel") then table.insert(rows,v) end
-	end
-	if #rows > 4 then rows[1]:Destroy() end
+local clean=text(gui,"F10 • CLEAN STREAM",UDim2.new(.5,-90,1,-88),UDim2.fromOffset(180,26),Enum.Font.GothamBold,10,Color3.fromRGB(180,188,202),Enum.TextXAlignment.Center)
+clean.BackgroundTransparency=.28;clean.BackgroundColor3=Color3.fromRGB(8,10,15);round(clean,9)
+
+local banner=text(gui,"",UDim2.new(.5,-300,0,24),UDim2.fromOffset(600,54),Enum.Font.GothamBlack,25,Color3.new(1,1,1),Enum.TextXAlignment.Center)
+banner.BackgroundColor3=Color3.fromRGB(8,10,15);banner.BackgroundTransparency=1;banner.TextTransparency=1;round(banner,12)
+
+local kills,active,wave=0,0,1
+local cleanMode=false
+local bannerToken=0
+
+local function refreshStats()stats.Text=("KILLS %d  •  ENEMIES %d  •  WAVE %d"):format(kills,active,wave) end
+local function showBanner(t)
+ bannerToken+=1;local token=bannerToken;banner.Text=t
+ TweenService:Create(banner,TweenInfo.new(.12),{TextTransparency=0,BackgroundTransparency=.18}):Play()
+ task.delay(1.8,function()if token~=bannerToken then return end;TweenService:Create(banner,TweenInfo.new(.24),{TextTransparency=1,BackgroundTransparency=1}):Play()end)
 end
 
-local bannerToken = 0
-local function showBanner(text)
-	bannerToken += 1
-	local token = bannerToken
-	banner.Text = text
-	TweenService:Create(banner,TweenInfo.new(.12),{TextTransparency = 0,BackgroundTransparency = .2}):Play()
-	task.delay(1.65,function()
-		if token ~= bannerToken then return end
-		TweenService:Create(banner,TweenInfo.new(.25),{TextTransparency = 1,BackgroundTransparency = 1}):Play()
-	end)
+local function setClean(on)
+ cleanMode=on
+ weapon.Visible=not on;vitals.Visible=not on;slots.Visible=not on;gifts.Visible=not on;status.Visible=not on;clean.Visible=not on
 end
+UserInputService.InputBegan:Connect(function(i,p)if not p and i.KeyCode==Enum.KeyCode.F10 then setClean(not cleanMode)end end)
 
-local function setCleanMode(on)
-	streamClean = on
-	feed.Visible = not on
-	helper.Visible = not on
+local function bindHumanoid(char)
+ local hum=char:WaitForChild("Humanoid",5);if not hum then return end
+ local function update()
+  local max=math.max(1,hum.MaxHealth);local hp=math.clamp(hum.Health,0,max);hpFill.Size=UDim2.fromScale(hp/max,1);hpText.Text=("%d / %d"):format(math.floor(hp+.5),math.floor(max+.5))
+  local shield=char:FindFirstChildOfClass("ForceField") and 100 or 0;shFill.Size=UDim2.fromScale(shield/100,1);shText.Text=("%d / 100"):format(shield)
+ end
+ hum.HealthChanged:Connect(update);hum:GetPropertyChangedSignal("MaxHealth"):Connect(update);char.ChildAdded:Connect(update);char.ChildRemoved:Connect(update);update()
 end
+if player.Character then task.spawn(bindHumanoid,player.Character) end
+player.CharacterAdded:Connect(bindHumanoid)
 
-UserInputService.InputBegan:Connect(function(input, processed)
-	if processed then return end
-	if input.KeyCode == Enum.KeyCode.F10 then setCleanMode(not streamClean) end
-end)
+local function updateWeapon()
+ local logical=tostring(player:GetAttribute("CurrentWeapon") or "Rifle")
+ local asset=tostring(player:GetAttribute("CurrentWeaponAsset") or logical)
+ local a=tonumber(player:GetAttribute("CurrentAmmo")) or 0
+ local r=tonumber(player:GetAttribute("ReserveAmmo")) or 0
+ local reload=player:GetAttribute("Reloading")==true
+ weaponName.Text=asset:upper()
+ ammoLabel.Text=reload and "RELOADING" or (("%d / %d"):format(a,r))
+ ammoLabel.TextSize=reload and 18 or 29
+ fireMode.Text=(logical=="Sword") and "MELEE" or ((logical=="Shotgun") and "HEAVY" or "AUTO")
+end
+for _,a in ipairs({"CurrentWeapon","CurrentWeaponAsset","CurrentAmmo","ReserveAmmo","Reloading"}) do player:GetAttributeChangedSignal(a):Connect(updateWeapon) end
+updateWeapon()
 
-addFeed("HUD READY • WAITING FOR EVENTS")
+local remote=ReplicatedStorage:WaitForChild("TikTokStreamEvent",15)
+if remote then
+ status2.Text="LIVE EVENT LINK READY"
+ remote.OnClientEvent:Connect(function(e)
+  if type(e)~="table" then return end
+  if e.kind=="stats" then kills=e.kills or kills;active=e.active or active;wave=e.wave or wave;refreshStats() end
+  if e.kind=="gift" then
+   kills=e.kills or kills;active=e.active or active;wave=e.wave or wave;refreshStats()
+   showBanner(("@%s • %s"):format(tostring(e.sender or "VIEWER"),tostring(e.gift or "GIFT")))
+  elseif e.kind=="banner" then showBanner(tostring(e.title or "VIEWER EVENT")) end
+ end)
+else status2.Text="EVENT LINK NOT READY" end
 
-task.spawn(function()
-	local remote = ReplicatedStorage:WaitForChild("TikTokStreamEvent",15)
-	if not remote then
-		addFeed("EVENT LINK NOT READY")
-		warn("StreamHUD: TikTokStreamEvent not found.")
-		return
-	end
-	addFeed("LIVE EVENT LINK READY")
-	remote.OnClientEvent:Connect(function(event)
-		if type(event) ~= "table" then return end
-		if event.kind == "stats" then
-			kills = event.kills or kills
-			active = event.active or active
-			wave = event.wave or wave
-			refresh()
-			return
-		end
-		if event.kind == "gift" then
-			kills = event.kills or kills
-			active = event.active or active
-			wave = event.wave or wave
-			refresh()
-			local sender = tostring(event.sender or "viewer")
-			local gift = tostring(event.gift or "gift")
-			local action = tostring(event.action or "enemy")
-			local amount = tonumber(event.amount) or 1
-			if action == "enemy" then
-				local word = amount == 1 and "ENEMY" or "ENEMIES"
-				addFeed(("@%s • %d %s • %s"):format(sender,amount,word,gift))
-				showBanner(("@%s SENT %d %s"):format(sender,amount,word))
-			elseif action == "boss" then
-				addFeed(("@%s • BOSS • %s"):format(sender,gift))
-				showBanner(("@%s DEPLOYED A BOSS"):format(sender))
-			elseif action == "heal" then
-				addFeed(("@%s • +%d HP • %s"):format(sender,amount,gift))
-				showBanner(("@%s GAVE +%d HP"):format(sender,amount))
-			elseif action == "shield" then
-				addFeed(("@%s • SHIELD • %s"):format(sender,gift))
-				showBanner(("@%s GAVE A SHIELD"):format(sender))
-			elseif action == "explosion" then
-				addFeed(("@%s • CHAOS • %s"):format(sender,gift))
-				showBanner(("@%s DROPPED CHAOS"):format(sender))
-			end
-		elseif event.kind == "banner" then
-			showBanner(tostring(event.title or "VIEWER EVENT"))
-		end
-	end)
-end)
-
-refresh()
+refreshStats()
+print("STREAM HUD V2 READY - cinematic FPS layout + ammo + gifts + health")
