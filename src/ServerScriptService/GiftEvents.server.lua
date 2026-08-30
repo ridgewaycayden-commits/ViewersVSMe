@@ -31,7 +31,6 @@ local function humanoid() local c=character();return c and c:FindFirstChildOfCla
 local function root() local c=character();return c and c:FindFirstChild("HumanoidRootPart") end
 local function announce(side,title,subtitle,color) fxRemote:FireAllClients({kind="announce",side=side,title=title,subtitle=subtitle,color=color}) end
 
--- Gift weapons last 90 seconds. A later gift can refresh the shared gift timer elsewhere in the live bridge.
 local function setGiftWeapon(weapon,duration,sender,label)
  local p=host();if not p then return end;duration=duration or 90
  local expires=workspace:GetServerTimeNow()+duration;p:SetAttribute("GiftWeapon",weapon);p:SetAttribute("GiftWeaponUntil",expires)
@@ -79,18 +78,16 @@ local function meteor(sender)
 end
 
 -- Three clean viewer choice tiers:
--- Rose HELP vs Chill AGAINST
+-- Rose HELP vs Chilli AGAINST
 -- Love You HELP vs Night Star AGAINST
 -- Galaxy HELP vs Giraffe AGAINST
 local Gifts={
  ["Rose"]={side="HELP",action=function(s)heal(10,s,"ROSE HEAL")end},
- ["Chill"]={side="AGAINST",action=function(s)horde(s,3,"CHILL HORDE")end},
+ ["Chilli"]={side="AGAINST",action=function(s)horde(s,3,"CHILLI HORDE")end},
  ["Love You"]={side="HELP",action=function(s)heal(25,s,"LOVE YOU BOOST");setGiftWeapon("Pistol",90,s,"HANDGUN DROP")end},
  ["Night Star"]={side="AGAINST",action=function(s)blackout(8,s,"NIGHT STAR BLACKOUT");horde(s,6,"NIGHT STAR HORDE")end},
  ["Galaxy"]={side="HELP",action=function(s)setGiftWeapon("Minigun",90,s,"GALAXY MINIGUN");shield(8,s,"GALAXY SHIELD")end},
  ["Giraffe"]={side="AGAINST",action=function(s)bossHorde(s,8,"GIRAFFE TITAN")end},
-
- -- Existing mappings kept for compatibility with current tests/live bridge.
  ["Heart Me"]={side="HELP",action=function(s)setGiftWeapon("SMG",90,s)end},
  ["Hand Hearts"]={side="HELP",action=function(s)heal(30,s);setGiftWeapon("Shotgun",90,s,"HANDGUN DROP")end},
  ["Interstellar"]={side="HELP",action=function(s)freezeZombies(7,s);setGiftWeapon("Rifle",90,s)end},
@@ -102,12 +99,10 @@ local Gifts={
  ["Universe"]={side="AGAINST",action=function(s)blackout(12,s);horde(s,16,"UNIVERSE HORDE")end},
  ["Meteor Shower"]={side="AGAINST",action=function(s)meteor(s)end},
 }
-
 local function processGift(name,sender,count)
  name=tostring(name or "");sender=tostring(sender or "VIEWER");count=math.clamp(tonumber(count)or 1,1,10);local cfg=Gifts[name];if not cfg then warn("GIFT EVENT: unmapped gift",name);return end
  for _=1,count do cfg.action(sender)end;print("GIFT EVENT:",cfg.side,name,"from",sender,"x"..count)
 end
-
 dispatch.Event:Connect(processGift)
 debugRemote.OnServerEvent:Connect(function(player,giftName)if player==host()then processGift(giftName,"TEST_VIEWER",1)end end)
-print("BIG GIFT EVENTS V1.2 READY - Rose/Chill, Love You/Night Star, Galaxy/Giraffe tiers")
+print("BIG GIFT EVENTS V1.2 READY - Rose/Chilli, Love You/Night Star, Galaxy/Giraffe tiers")
