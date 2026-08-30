@@ -1,5 +1,5 @@
 -- WeaponPresentationV2.client.lua
--- VIEWERS VS ME - imported weapon presentation pass.
+-- VIEWERS VS ME - imported weapon presentation pass V2.1.
 -- Runs after AutoCombat's render update so every Toolbox model gets a sane FPS scale/pose.
 
 local Players = game:GetService("Players")
@@ -30,14 +30,18 @@ local Config = {
 	Minigun = {
 		asset = "Minigun",
 		display = "MINIGUN",
-		targetLongest = 3.05,
-		offset = CFrame.new(1.12,-1.06,-2.72) * CFrame.Angles(math.rad(-5),math.rad(168),math.rad(2)),
+		-- This Toolbox minigun has a much larger/stranger source bounding box than the AK.
+		-- Keep it lower-right, closer, and rotate it independently so the barrels point forward.
+		targetLongest = 3.65,
+		offset = CFrame.new(1.38,-1.22,-2.18) * CFrame.Angles(math.rad(-4),math.rad(82),math.rad(-2)),
 	},
 	Shotgun = {
 		asset = "RocketLauncher",
-		display = "SHOTGUN",
-		targetLongest = 2.85,
-		offset = CFrame.new(1.04,-1.01,-2.52) * CFrame.Angles(math.rad(-6),math.rad(168),math.rad(3)),
+		-- Logical combat name stays Shotgun for server compatibility, but visually this asset is an RPG.
+		display = "ROCKET LAUNCHER",
+		-- The imported RPG's long axis is 90 degrees off the AK-style assets, so correct it here.
+		targetLongest = 3.20,
+		offset = CFrame.new(1.30,-1.10,-2.28) * CFrame.Angles(math.rad(-7),math.rad(78),math.rad(-3)),
 	},
 	SMG = {
 		asset = "HyperlaserGun",
@@ -131,4 +135,4 @@ RunService:BindToRenderStep("ViewersVsMeWeaponPresentation",Enum.RenderPriority.
 end)
 
 syncDisplayLabel()
-print("WEAPON PRESENTATION V2 READY - normalized imported models + per-weapon FPS poses")
+print("WEAPON PRESENTATION V2.1 READY - RPG axis fixed + minigun FPS pose corrected")
