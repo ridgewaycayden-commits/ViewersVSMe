@@ -1,20 +1,27 @@
 -- AutoCombat.client.lua
--- VIEWERS VS ME - PLAYER AI V2.7
--- Autonomous FPS combat with manual pause + road-focused movement for City Map.
+-- VIEWERS VS ME - PLAYER AI V2.8
+-- Autonomous FPS combat with manual pause + road-focused movement + imported Toolbox weapon models.
 
 local Players=game:GetService("Players")
 local ReplicatedStorage=game:GetService("ReplicatedStorage")
 local RunService=game:GetService("RunService")
-local Debris=game:GetService("Debris")
 
 local player=Players.LocalPlayer
 local camera=workspace.CurrentCamera
 local enemies=workspace:WaitForChild("TikTokEnemies")
 local attackRemote=ReplicatedStorage:WaitForChild("AutoCombatAttack")
+local weaponAssets=ReplicatedStorage:WaitForChild("WeaponAssets",10)
 local rng=Random.new()
 
+-- Logical combat weapon -> imported Studio asset.
+-- The logical names stay the same so the existing server damage + TikTok gift system keep working.
 local Weapons={
- Pistol={range=100,cooldown=.32,color=Color3.fromRGB(255,200,80),kick=.065},SMG={range=95,cooldown=.10,color=Color3.fromRGB(70,205,255),kick=.035},Shotgun={range=65,cooldown=.72,color=Color3.fromRGB(255,135,65),kick=.14},Rifle={range=145,cooldown=.22,color=Color3.fromRGB(105,255,150),kick=.06},Minigun={range=120,cooldown=.055,color=Color3.fromRGB(255,75,75),kick=.025},Sword={range=10,cooldown=.48,color=Color3.fromRGB(90,220,255),kick=.10},
+ Pistol={range=100,cooldown=.32,kick=.065,asset="Handgun",size=3.0,offset=CFrame.new(.48,-.58,-1.45)*CFrame.Angles(0,math.rad(180),0)},
+ SMG={range=95,cooldown=.10,kick=.035,asset="HyperlaserGun",size=3.8,offset=CFrame.new(.5,-.58,-1.65)*CFrame.Angles(0,math.rad(180),0)},
+ Shotgun={range=65,cooldown=.72,kick=.14,asset="RocketLauncher",size=4.5,offset=CFrame.new(.5,-.62,-1.85)*CFrame.Angles(0,math.rad(180),0)},
+ Rifle={range=145,cooldown=.22,kick=.06,asset="AK47",size=4.6,offset=CFrame.new(.5,-.6,-1.75)*CFrame.Angles(0,math.rad(180),0)},
+ Minigun={range=120,cooldown=.055,kick=.025,asset="Minigun",size=4.8,offset=CFrame.new(.53,-.67,-1.95)*CFrame.Angles(0,math.rad(180),0)},
+ Sword={range=10,cooldown=.48,kick=.10,asset="Knife",size=2.7,offset=CFrame.new(.58,-.7,-1.25)*CFrame.Angles(math.rad(-12),math.rad(180),math.rad(8))},
 }
 
 local currentWeapon="Rifle"
@@ -24,7 +31,6 @@ local recoil=0
 local viewModel
 local weaponRoot
 local muzzlePart
-local bobTime=0
 local roamGoal
 local roamExpire=0
 local strafeSign=1
@@ -65,7 +71,7 @@ local function los(m)
  local p=point(m)
  if not p then return false end
  local d=p-camera.CFrame.Position
- losParams.FilterDescendantsInstances={player.Character,camera}
+ losParams.FilterDescendantsInstances={player.Character,camera,viewModel}
  local hit=workspace:Raycast(camera.CFrame.Position,d,losParams)
  return hit and hit.Instance:IsDescendantOf(m)
 end
@@ -90,27 +96,72 @@ local function giftGun()
  return "Rifle"
 end
 
-local function part(m,n,s,c,mat,cf)
- local p=Instance.new("Part")
- p.Name=n;p.Size=s;p.Color=c;p.Material=mat or Enum.Material.Metal;p.Anchored=true
- p.CanCollide=false;p.CanTouch=false;p.CanQuery=false;p.CastShadow=false;p.CFrame=cf;p.Parent=m
- return p
-end
-
 local function clearVM()
  if viewModel then viewModel:Destroy() end
  viewModel=nil;weaponRoot=nil;muzzlePart=nil;shownWeapon=nil
 end
 
+local function fallbackWeapon(n)
+ local m=Instance.new("Model")
+ m.Name="FPSViewModel_"..n
+ m.Parent=camera
+ local p=Instance.new("Part")
+ p.Name="Handle";p.Size=Vector3.new(.6,.6,3.2);p.Material=Enum.Material.Metal;p.Color=Color3.fromRGB(35,42,52)
+ p.Anchored=true;p.CanCollide=false;p.CanTouch=false;p.CanQuery=false;p.CastShadow=false;p.Parent=m
+ m.PrimaryPart=p
+ return m,p
+end
+
 local function makeWeapon(n)
  clearVM();shownWeapon=n
- local m=Instance.new("Model");m.Name="FPSViewModel";m.Parent=camera;viewModel=m
- weaponRoot=part(m,"Root",Vector3.new(.05,.05,.05),Color3.new(),Enum.Material.SmoothPlastic,CFrame.new())
- weaponRoot.Transparency=1;m.PrimaryPart=weaponRoot
- part(m,"Gun",Vector3.new(.58,.62,3.4),Color3.fromRGB(35,42,52),Enum.Material.Metal,CFrame.new(.15,-.1,-1.5))
- part(m,"Barrel",Vector3.new(.15,.15,2),Color3.fromRGB(100,110,120),Enum.Material.Metal,CFrame.new(.15,.05,-4))
- part(m,"Grip",Vector3.new(.35,.85,.4),Color3.fromRGB(15,17,20),Enum.Material.SmoothPlastic,CFrame.new(.15,-.65,-.25))
- muzzlePart=part(m,"Muzzle",Vector3.new(.1,.1,.1),Weapons[n].color,Enum.Material.Neon,CFrame.new(.15,.05,-5));muzzlePart.Transparency=1
+ local cfg=Weapons[n] or Weapons.Rifle
+ local source=weaponAssets and weaponAssets:FindFirstChild(cfg.asset)
+
+ if not source then
+  warn("VIEWERS VS ME: missing weapon asset",cfg.asset,"- using fallback")
+  viewModel,weaponRoot=fallbackWeapon(n)
+  return
+ end
+
+ local holder=Instance.new("Model")
+ holder.Name="FPSViewModel_"..cfg.asset
+ holder.Parent=camera
+
+ local clone=source:Clone()
+ for _,obj in ipairs(clone:GetDescendants()) do
+  if obj:IsA("Script") or obj:IsA("LocalScript") or obj:IsA("ModuleScript") or obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+   obj:Destroy()
+  end
+ end
+ for _,child in ipairs(clone:GetChildren()) do child.Parent=holder end
+ clone:Destroy()
+
+ weaponRoot=holder:FindFirstChild("Handle",true) or holder:FindFirstChild("Main",true) or holder:FindFirstChild("AimPart",true) or holder:FindFirstChildWhichIsA("BasePart",true)
+ if not weaponRoot then
+  holder:Destroy()
+  viewModel,weaponRoot=fallbackWeapon(n)
+  return
+ end
+
+ for _,obj in ipairs(holder:GetDescendants()) do
+  if obj:IsA("BasePart") then
+   obj.Anchored=true;obj.CanCollide=false;obj.CanTouch=false;obj.CanQuery=false;obj.CastShadow=false
+  end
+ end
+ holder.PrimaryPart=weaponRoot
+
+ local ok,_,size=pcall(function()
+  local cf,s=holder:GetBoundingBox()
+  return cf,s
+ end)
+ if ok and size then
+  local longest=math.max(size.X,size.Y,size.Z)
+  if longest>.05 then pcall(function() holder:ScaleTo(math.clamp(cfg.size/longest,.06,10)) end) end
+ end
+
+ muzzlePart=holder:FindFirstChild("Muzzle",true) or holder:FindFirstChild("MouseLoc",true) or holder:FindFirstChild("MuzzleLoc",true) or holder:FindFirstChild("Chamber",true) or holder:FindFirstChild("A1",true)
+ viewModel=holder
+ print("EQUIPPED IMPORTED WEAPON:",n,"->",cfg.asset)
 end
 
 local function shoot(t)
@@ -123,24 +174,18 @@ end
 local function surfaceScore(hit,rootY)
  if not hit or not hit.Instance then return -100 end
  local p=hit.Instance
- if not p:IsA("BasePart") then return -100 end
- if not p.CanCollide then return -100 end
- if hit.Normal.Y < .82 then return -100 end
-
+ if not p:IsA("BasePart") or not p.CanCollide or hit.Normal.Y<.82 then return -100 end
  local name=string.lower(p.Name)
  local score=0
  local heightDelta=math.abs(hit.Position.Y-(rootY-3))
  if heightDelta<1.5 then score+=5 elseif heightDelta<3 then score+=2 else score-=8 end
-
  if name:find("road") or name:find("street") or name:find("asphalt") or name:find("pavement") then score+=18 end
  if name:find("sidewalk") or name:find("walkway") or name:find("ground") or name:find("floor") then score+=7 end
  if name:find("roof") or name:find("crate") or name:find("box") or name:find("car") or name:find("truck") or name:find("bus") or name:find("bench") or name:find("table") or name:find("container") or name:find("dumpster") then score-=30 end
-
  if p.Material==Enum.Material.Asphalt then score+=16 end
  if p.Material==Enum.Material.Concrete then score+=9 end
  if p.Material==Enum.Material.Cobblestone then score+=8 end
  if p.Material==Enum.Material.Metal or p.Material==Enum.Material.Wood or p.Material==Enum.Material.WoodPlanks then score-=5 end
-
  return score
 end
 
@@ -156,31 +201,21 @@ local function roadAdjustedDirection(root,desired)
  if desired.Magnitude<.01 then return Vector3.zero end
  if os.clock()<nextRoadCheck and cachedRoadDir.Magnitude>.01 then return cachedRoadDir end
  nextRoadCheck=os.clock()+.12
-
  moveRayParams.FilterDescendantsInstances={player.Character,enemies,camera}
  local bestDir=nil
  local bestScore=-1e9
  local angles={0,-18,18,-35,35,-55,55,-80,80,110,-110,180}
-
  for _,ang in ipairs(angles) do
   local dir=rotated(desired,ang)
   local probe=root.Position+dir*8+Vector3.new(0,6,0)
   local ground=workspace:Raycast(probe,Vector3.new(0,-14,0),moveRayParams)
   local score=surfaceScore(ground,root.Position.Y)
-
-  -- Prefer staying generally pointed where the AI wanted to go.
-  score += math.max(-5,desired:Dot(dir)*6)
-
-  -- Reject directions with a solid waist/chest-height obstacle immediately ahead.
+  score+=math.max(-5,desired:Dot(dir)*6)
   local wall=workspace:Raycast(root.Position+Vector3.new(0,1.5,0),dir*5,moveRayParams)
   if wall and wall.Instance and wall.Instance.CanCollide then score-=35 end
-
-  -- Big vertical change means stairs/props/roofs; roads should remain nearly flat.
   if ground and math.abs(ground.Position.Y-(root.Position.Y-3))>3.2 then score-=25 end
-
   if score>bestScore then bestScore=score;bestDir=dir end
  end
-
  cachedRoadDir=(bestDir or desired).Unit
  return cachedRoadDir
 end
@@ -210,7 +245,6 @@ RunService.RenderStepped:Connect(function(dt)
  local desired=Vector3.zero
 
  if paused then
-  -- Absolutely no AI movement/camera steering while paused.
   currentWeapon=giftGun()
   if target and visible then if dist<=8.5 then currentWeapon="Sword" end;shoot(target) end
  else
@@ -245,10 +279,11 @@ RunService.RenderStepped:Connect(function(dt)
  end
 
  if shownWeapon~=currentWeapon then makeWeapon(currentWeapon) end
- bobTime+=dt*(hum.MoveDirection.Magnitude>.1 and 8 or 2)
  recoil*=math.max(0,1-dt*10)
  if viewModel and weaponRoot then
-  viewModel:PivotTo(camera.CFrame*CFrame.new(.46,-.62,-1.25+recoil)*CFrame.Angles(math.rad(-4-recoil*50),math.rad(-2),math.rad(-1)))
+  local cfg=Weapons[currentWeapon] or Weapons.Rifle
+  local recoilCF=CFrame.new(0,0,recoil*1.5)*CFrame.Angles(math.rad(-recoil*45),0,0)
+  viewModel:PivotTo(camera.CFrame*cfg.offset*recoilCF)
  end
 end)
 
@@ -256,4 +291,4 @@ player.CharacterAdded:Connect(function()
  task.wait(.4);clearVM();roamGoal=nil;cachedRoadDir=Vector3.zero
 end)
 
-print("PLAYER AI V2.7 READY - clean pause + road-focused movement")
+print("PLAYER AI V2.8 READY - imported guns + TikTok gift weapons + road-focused movement")
