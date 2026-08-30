@@ -1,5 +1,5 @@
 -- LocalTikTokBridge.server.lua
--- VIEWERS VS ME - LOCAL STUDIO TIKTOK BRIDGE V1.2
+-- VIEWERS VS ME - LOCAL STUDIO TIKTOK BRIDGE V1.3
 -- Polls the PC bridge at 127.0.0.1:8765 while testing in Studio.
 -- Requires Studio Settings > Security > Allow HTTP Requests.
 
@@ -28,7 +28,7 @@ end
 local streamRemote = ReplicatedStorage:FindFirstChild("TikTokStreamEvent")
 local warned = false
 
-print("LOCAL TIKTOK BRIDGE V1.2 READY - polling PC bridge")
+print("LOCAL TIKTOK BRIDGE V1.3 READY - polling PC bridge")
 
 local function pollLoop()
 	while script.Parent do
@@ -62,6 +62,7 @@ local function pollLoop()
 							print("LOCAL TIKTOK GIFT:", gift, "from", sender, "x" .. count)
 						end
 					end
+				end
 			end
 		elseif not warned then
 			warned = true
