@@ -18,7 +18,7 @@ local debug = ReplicatedStorage:WaitForChild("GiftDebug")
 local MAP = {
 	["Rose"]={side="HELP",title="ROSE • HEAL",subtitle="+8 HP restored",color=Color3.fromRGB(90,255,150)},
 	["Heart Me"]={side="HELP",title="HEART ME • HYPERLASER",subtitle="Temporary Hyperlaser weapon activated",color=Color3.fromRGB(80,220,255)},
-	["Hand Hearts"]={side="HELP",title="HAND HEARTS • SHOTGUN",subtitle="+30 HP and temporary shotgun activated",color=Color3.fromRGB(255,155,90)},
+	["Hand Hearts"]={side="HELP",title="HAND HEARTS • HANDGUN",subtitle="+30 HP and temporary handgun activated",color=Color3.fromRGB(255,155,90)},
 	["Galaxy"]={side="HELP",title="GALAXY • MINIGUN",subtitle="Minigun activated + 6 second shield",color=Color3.fromRGB(120,180,255)},
 	["Interstellar"]={side="HELP",title="INTERSTELLAR • FREEZE",subtitle="Horde frozen + AK47 boost activated",color=Color3.fromRGB(120,230,255)},
 	["Phoenix"]={side="HELP",title="PHOENIX • AIRSTRIKE",subtitle="Normal infected wiped + 60 HP restored",color=Color3.fromRGB(255,205,80)},
