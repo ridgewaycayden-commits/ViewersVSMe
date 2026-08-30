@@ -1,12 +1,13 @@
 -- AutoCombat.client.lua
--- VIEWERS VS ME - PLAYER AI V3.5
--- Imported FPS weapons + visible gunfire + ammo/reload + manual pause + road-focused movement.
+-- VIEWERS VS ME - PLAYER AI V3.6
+-- Imported FPS weapons + melee + gift guns + manual pause + human-like pathfinding movement.
 
 local Players=game:GetService("Players")
 local ReplicatedStorage=game:GetService("ReplicatedStorage")
 local RunService=game:GetService("RunService")
 local Debris=game:GetService("Debris")
 local TweenService=game:GetService("TweenService")
+local PathfindingService=game:GetService("PathfindingService")
 
 local player=Players.LocalPlayer
 local camera=workspace.CurrentCamera
@@ -33,14 +34,21 @@ local weaponRoot
 local muzzlePart
 local roamGoal
 local roamExpire=0
-local strafeSign=1
-local nextStrafeFlip=0
-local nextRoadCheck=0
-local cachedRoadDir=Vector3.zero
 local bobClock=0
 local reloading=false
 local ammo={}
 local reserve={}
+
+-- Navigation state. Pathfinding owns long-range decisions, local feelers prevent wall clipping.
+local navWaypoints={}
+local navIndex=1
+local navGoal=nil
+local nextPathCompute=0
+local forceRepath=false
+local nextHumanPause=0
+local humanPauseUntil=0
+local lastRootPos=nil
+local stuckSince=nil
 
 for name,cfg in pairs(Weapons) do ammo[name]=cfg.clip;reserve[name]=cfg.reserve end
 
@@ -176,10 +184,8 @@ local function startReload()
  local thisWeapon=currentWeapon
  task.delay(cfg.reload,function()
   if currentWeapon~=thisWeapon then reloading=false;publishWeaponState();return end
-  local need=cfg.clip-(ammo[thisWeapon] or 0)
-  local take=math.min(need,reserve[thisWeapon] or 0)
-  ammo[thisWeapon]=(ammo[thisWeapon] or 0)+take
-  reserve[thisWeapon]=(reserve[thisWeapon] or 0)-take
+  local need=cfg.clip-(ammo[thisWeapon] or 0);local take=math.min(need,reserve[thisWeapon] or 0)
+  ammo[thisWeapon]=(ammo[thisWeapon] or 0)+take;reserve[thisWeapon]=(reserve[thisWeapon] or 0)-take
   reloading=false;publishWeaponState()
  end)
 end
@@ -187,19 +193,12 @@ end
 local function shoot(t)
  if not t or not los(t) or reloading then return end
  local cfg=Weapons[currentWeapon] or Weapons.Sword
-
- -- Knife is true melee only: no tracer, muzzle flash, casing, recoil, or long-range remote attack.
  if currentWeapon=="Sword" then
-  local char=player.Character
-  local pr=char and char:FindFirstChild("HumanoidRootPart")
-  local er=t:FindFirstChild("HumanoidRootPart")
+  local char=player.Character;local pr=char and char:FindFirstChild("HumanoidRootPart");local er=t:FindFirstChild("HumanoidRootPart")
   if not pr or not er or (er.Position-pr.Position).Magnitude>cfg.range then return end
   if os.clock()-lastShot<cfg.cooldown then return end
-  lastShot=os.clock()
-  attackRemote:FireServer(t,"Sword")
-  return
+  lastShot=os.clock();attackRemote:FireServer(t,"Sword");return
  end
-
  if (ammo[currentWeapon] or 0)<=0 then startReload();return end
  if os.clock()-lastShot<cfg.cooldown then return end
  lastShot=os.clock();recoil=cfg.kick
@@ -207,9 +206,7 @@ local function shoot(t)
  local from=muzzlePosition()
  if currentWeapon=="Shotgun" then
   for _=1,7 do local spread=Vector3.new(rng:NextNumber(-1.8,1.8),rng:NextNumber(-1.3,1.3),rng:NextNumber(-1.8,1.8));tracerFX(from,aim+spread,cfg.tracer,.075,.11) end
- else
-  tracerFX(from,aim,cfg.tracer,currentWeapon=="Minigun" and .065 or .09,currentWeapon=="Minigun" and .075 or .11)
- end
+ else tracerFX(from,aim,cfg.tracer,currentWeapon=="Minigun" and .065 or .09,currentWeapon=="Minigun" and .075 or .11) end
  ammo[currentWeapon]=math.max(0,(ammo[currentWeapon] or cfg.clip)-1)
  publishWeaponState();muzzleFlash(from,cfg);casingFX();impactFX(aim,cfg.tracer)
  if ammo[currentWeapon]<=0 then startReload() end
@@ -221,36 +218,80 @@ local function surfaceScore(hit,rootY)
  local p=hit.Instance;if not p:IsA("BasePart") or not p.CanCollide or hit.Normal.Y<.82 then return -100 end
  local name=string.lower(p.Name);local score=0;local heightDelta=math.abs(hit.Position.Y-(rootY-3))
  if heightDelta<1.5 then score+=5 elseif heightDelta<3 then score+=2 else score-=8 end
- if name:find("road") or name:find("street") or name:find("asphalt") or name:find("pavement") then score+=18 end
- if name:find("sidewalk") or name:find("walkway") or name:find("ground") or name:find("floor") then score+=7 end
- if name:find("roof") or name:find("crate") or name:find("box") or name:find("car") or name:find("truck") or name:find("bus") or name:find("bench") or name:find("table") or name:find("container") or name:find("dumpster") then score-=30 end
- if p.Material==Enum.Material.Asphalt then score+=16 end;if p.Material==Enum.Material.Concrete then score+=9 end;if p.Material==Enum.Material.Cobblestone then score+=8 end
- if p.Material==Enum.Material.Metal or p.Material==Enum.Material.Wood or p.Material==Enum.Material.WoodPlanks then score-=5 end
+ if name:find("road") or name:find("street") or name:find("asphalt") or name:find("pavement") then score+=24 end
+ if name:find("sidewalk") or name:find("walkway") or name:find("ground") or name:find("floor") then score+=8 end
+ if name:find("roof") or name:find("crate") or name:find("box") or name:find("car") or name:find("truck") or name:find("bus") or name:find("bench") or name:find("table") or name:find("container") or name:find("dumpster") then score-=50 end
+ if p.Material==Enum.Material.Asphalt then score+=24 elseif p.Material==Enum.Material.Concrete then score+=10 elseif p.Material==Enum.Material.Cobblestone then score+=8 end
  return score
 end
 
-local function rotated(dir,deg)
- if dir.Magnitude<.01 then return dir end
- local a=math.rad(deg);local x=dir.X*math.cos(a)-dir.Z*math.sin(a);local z=dir.X*math.sin(a)+dir.Z*math.cos(a);return Vector3.new(x,0,z).Unit
-end
-
-local function roadAdjustedDirection(root,desired)
- if desired.Magnitude<.01 then return Vector3.zero end
- if os.clock()<nextRoadCheck and cachedRoadDir.Magnitude>.01 then return cachedRoadDir end
- nextRoadCheck=os.clock()+.12;moveRayParams.FilterDescendantsInstances={player.Character,enemies,camera}
- local bestDir=nil;local bestScore=-1e9;local angles={0,-18,18,-35,35,-55,55,-80,80,110,-110,180}
- for _,ang in ipairs(angles) do
-  local dir=rotated(desired,ang);local probe=root.Position+dir*8+Vector3.new(0,6,0);local ground=workspace:Raycast(probe,Vector3.new(0,-14,0),moveRayParams);local score=surfaceScore(ground,root.Position.Y)
-  score+=math.max(-5,desired:Dot(dir)*6);local wall=workspace:Raycast(root.Position+Vector3.new(0,1.5,0),dir*5,moveRayParams);if wall and wall.Instance and wall.Instance.CanCollide then score-=35 end
-  if ground and math.abs(ground.Position.Y-(root.Position.Y-3))>3.2 then score-=25 end;if score>bestScore then bestScore=score;bestDir=dir end
- end
- cachedRoadDir=(bestDir or desired).Unit;return cachedRoadDir
-end
-
 local function chooseRoam(root)
- local best=nil;local bestScore=-1e9;moveRayParams.FilterDescendantsInstances={player.Character,enemies,camera}
- for _=1,20 do local a=rng:NextNumber(0,math.pi*2);local rad=rng:NextNumber(24,55);local candidate=root.Position+Vector3.new(math.cos(a)*rad,0,math.sin(a)*rad);local hit=workspace:Raycast(candidate+Vector3.new(0,10,0),Vector3.new(0,-22,0),moveRayParams);local score=surfaceScore(hit,root.Position.Y);if score>bestScore and hit then bestScore=score;best=hit.Position end end
- roamGoal=best or (root.Position+root.CFrame.LookVector*35);roamExpire=os.clock()+rng:NextNumber(4,8)
+ local best,bestScore=nil,-1e9
+ moveRayParams.FilterDescendantsInstances={player.Character,enemies,camera}
+ for _=1,30 do
+  local a=rng:NextNumber(0,math.pi*2);local rad=rng:NextNumber(28,62)
+  local candidate=root.Position+Vector3.new(math.cos(a)*rad,0,math.sin(a)*rad)
+  local hit=workspace:Raycast(candidate+Vector3.new(0,12,0),Vector3.new(0,-26,0),moveRayParams)
+  local score=surfaceScore(hit,root.Position.Y)
+  if score>bestScore and hit then bestScore=score;best=hit.Position end
+ end
+ roamGoal=best or (root.Position+root.CFrame.LookVector*35);roamExpire=os.clock()+rng:NextNumber(5,9);forceRepath=true
+end
+
+local function computePath(root,goal)
+ if not goal then return false end
+ local path=PathfindingService:CreatePath({AgentRadius=2.75,AgentHeight=5.5,AgentCanJump=true,AgentCanClimb=false,WaypointSpacing=4})
+ local ok=pcall(function() path:ComputeAsync(root.Position,goal) end)
+ if not ok or path.Status~=Enum.PathStatus.Success then
+  navWaypoints={};navIndex=1;navGoal=goal;nextPathCompute=os.clock()+.25;return false
+ end
+ navWaypoints=path:GetWaypoints();navIndex=2;navGoal=goal;nextPathCompute=os.clock()+.65;forceRepath=false
+ return #navWaypoints>=2
+end
+
+local function wallAhead(root,dir)
+ if dir.Magnitude<.05 then return false end
+ moveRayParams.FilterDescendantsInstances={player.Character,enemies,camera}
+ local origin=root.Position+Vector3.new(0,1.6,0)
+ local right=Vector3.new(-dir.Z,0,dir.X)
+ for _,off in ipairs({0,-1.35,1.35}) do
+  local hit=workspace:Raycast(origin+right*off,dir.Unit*5.25,moveRayParams)
+  if hit and hit.Instance and hit.Instance.CanCollide and hit.Normal.Y<.55 then return true end
+ end
+ return false
+end
+
+local function navigationDirection(root,goal)
+ if not goal then return Vector3.zero end
+ if not navGoal or (navGoal-goal).Magnitude>7 or forceRepath or os.clock()>=nextPathCompute then computePath(root,goal) end
+ if #navWaypoints==0 then return Vector3.zero end
+ while navIndex<=#navWaypoints do
+  local wp=navWaypoints[navIndex]
+  local flat=Vector3.new(wp.Position.X-root.Position.X,0,wp.Position.Z-root.Position.Z)
+  if flat.Magnitude<3.1 then
+   navIndex+=1
+  else
+   if wp.Action==Enum.PathWaypointAction.Jump then
+    local hum=root.Parent and root.Parent:FindFirstChildOfClass("Humanoid");if hum then hum.Jump=true end
+   end
+   local dir=flat.Unit
+   if wallAhead(root,dir) then forceRepath=true;return Vector3.zero end
+   return dir
+  end
+ end
+ forceRepath=true
+ return Vector3.zero
+end
+
+local function combatGoal(root,target,dist)
+ local er=target and target:FindFirstChild("HumanoidRootPart");if not er then return nil end
+ local away=Vector3.new(root.Position.X-er.Position.X,0,root.Position.Z-er.Position.Z)
+ if away.Magnitude<.1 then away=Vector3.new(1,0,0) end
+ -- Knife closes to melee distance; gift guns keep a natural fighting gap.
+ local desiredGap=(giftGun()=="Sword") and 6.5 or 24
+ local goal=er.Position+away.Unit*desiredGap
+ local ground=workspace:Raycast(goal+Vector3.new(0,10,0),Vector3.new(0,-22,0),moveRayParams)
+ return ground and ground.Position or goal
 end
 
 player.CameraMode=Enum.CameraMode.LockFirstPerson
@@ -258,30 +299,54 @@ publishWeaponState()
 
 RunService.RenderStepped:Connect(function(dt)
  local char,hum,root,head=getCharacter();if not char then return end
- local paused=player:GetAttribute("AutoMovePaused")==true;local target,dist,visible=nearest(root);local desired=Vector3.zero
- local wanted=currentWeapon
+ local paused=player:GetAttribute("AutoMovePaused")==true
+ local target,dist,visible=nearest(root)
+ local desired=Vector3.zero
+ local wanted=giftGun()
+
  if paused then
-  wanted=giftGun();if target and visible and dist<=8.5 then wanted="Sword" end
+  hum:Move(Vector3.zero,false)
  else
-  if target and alive(target) then
-   local er=target:FindFirstChild("HumanoidRootPart");local flat=Vector3.new(er.Position.X-root.Position.X,0,er.Position.Z-root.Position.Z)
-   if visible then
-    if os.clock()>nextStrafeFlip then strafeSign=-strafeSign;nextStrafeFlip=os.clock()+rng:NextNumber(1,2.4) end
-    local right=flat.Magnitude>0 and Vector3.new(-flat.Z,0,flat.X).Unit or Vector3.xAxis
-    if dist>31 then desired=flat.Unit elseif dist<10 then desired=(-flat.Unit+right*.35*strafeSign).Unit else desired=(right*strafeSign+flat.Unit*.12).Unit end
-    desired=roadAdjustedDirection(root,desired);hum.WalkSpeed=20;hum:Move(desired,false);wanted=dist<=8.5 and "Sword" or giftGun()
-   else wanted=giftGun();hum.WalkSpeed=19;if flat.Magnitude>0 then desired=roadAdjustedDirection(root,flat.Unit);hum:Move(desired,false) end end
-  else
-   wanted=giftGun();if not roamGoal or os.clock()>roamExpire or (root.Position-roamGoal).Magnitude<5 then chooseRoam(root) end
-   local d=Vector3.new(roamGoal.X-root.Position.X,0,roamGoal.Z-root.Position.Z);if d.Magnitude>0 then desired=roadAdjustedDirection(root,d.Unit);hum.WalkSpeed=15.5;hum:Move(desired,false) end
+  if os.clock()>nextHumanPause then
+   nextHumanPause=os.clock()+rng:NextNumber(7,13)
+   if rng:NextNumber()<.22 then humanPauseUntil=os.clock()+rng:NextNumber(.18,.45) end
   end
+
+  local goal
+  if target and alive(target) then
+   goal=combatGoal(root,target,dist)
+   hum.WalkSpeed=(giftGun()=="Sword") and 18 or 17
+  else
+   if not roamGoal or os.clock()>roamExpire or (root.Position-roamGoal).Magnitude<5 then chooseRoam(root) end
+   goal=roamGoal;hum.WalkSpeed=15.5
+  end
+
+  if os.clock()>=humanPauseUntil then desired=navigationDirection(root,goal) end
+  hum:Move(desired,false)
+
+  -- If we are barely moving while asking to move, force a fresh path instead of grinding into geometry.
+  if desired.Magnitude>.1 then
+   if lastRootPos then
+    local moved=(Vector3.new(root.Position.X,0,root.Position.Z)-Vector3.new(lastRootPos.X,0,lastRootPos.Z)).Magnitude
+    if moved<.035 then stuckSince=stuckSince or os.clock() else stuckSince=nil end
+    if stuckSince and os.clock()-stuckSince>.55 then forceRepath=true;stuckSince=nil;hum:Move(Vector3.zero,false) end
+   end
+   lastRootPos=root.Position
+  else stuckSince=nil;lastRootPos=root.Position end
  end
+
  if wanted~=currentWeapon then currentWeapon=wanted;reloading=false;publishWeaponState() end
  if target and visible then shoot(target) end
+
  if not paused then
   local look=target and visible and point(target) or (root.Position+(desired.Magnitude>.1 and desired or root.CFrame.LookVector)*30+Vector3.new(0,1.4,0))
-  if look then local cp=head.Position+Vector3.new(0,.15,0);camera.CFrame=camera.CFrame:Lerp(CFrame.lookAt(cp,look),math.clamp(dt*3.5,0,1));local f=camera.CFrame.LookVector;root.CFrame=root.CFrame:Lerp(CFrame.lookAt(root.Position,root.Position+Vector3.new(f.X,0,f.Z)),math.clamp(dt*4,0,1)) end
+  if look then
+   local cp=head.Position+Vector3.new(0,.15,0)
+   camera.CFrame=camera.CFrame:Lerp(CFrame.lookAt(cp,look),math.clamp(dt*3.1,0,1))
+   if desired.Magnitude>.08 then root.CFrame=root.CFrame:Lerp(CFrame.lookAt(root.Position,root.Position+desired),math.clamp(dt*4.5,0,1)) end
+  end
  end
+
  if shownWeapon~=currentWeapon then makeWeapon(currentWeapon) end
  recoil*=math.max(0,1-dt*11);bobClock+=dt*(hum.MoveDirection.Magnitude>.1 and 7 or 2)
  if viewModel and weaponRoot then
@@ -293,5 +358,8 @@ RunService.RenderStepped:Connect(function(dt)
  end
 end)
 
-player.CharacterAdded:Connect(function() task.wait(.4);clearVM();roamGoal=nil;cachedRoadDir=Vector3.zero;reloading=false;currentWeapon="Sword";publishWeaponState() end)
-print("PLAYER AI V3.5 READY - knife is melee-only, no shooting behavior")
+player.CharacterAdded:Connect(function()
+ task.wait(.4);clearVM();roamGoal=nil;navWaypoints={};navGoal=nil;forceRepath=true;lastRootPos=nil;stuckSince=nil;reloading=false;currentWeapon="Sword";publishWeaponState()
+end)
+
+print("PLAYER AI V3.6 READY - pathfinding movement + hard building avoidance + human pauses")
