@@ -1,5 +1,5 @@
 -- AutoCombat.client.lua
--- VIEWERS VS ME - PLAYER AI V3.4
+-- VIEWERS VS ME - PLAYER AI V3.5
 -- Imported FPS weapons + visible gunfire + ammo/reload + manual pause + road-focused movement.
 
 local Players=game:GetService("Players")
@@ -21,7 +21,7 @@ local Weapons={
  Shotgun={range=65,cooldown=.70,kick=.16,asset="Handgun",size=2.65,offset=CFrame.new(.76,-.82,-2.05)*CFrame.Angles(math.rad(-5),math.rad(169),math.rad(2)),tracer=Color3.fromRGB(255,150,75),clip=6,reserve=36,reload=1.65},
  Rifle={range=145,cooldown=.16,kick=.075,asset="AK47",size=3.75,offset=CFrame.new(1.18,-1.08,-2.35)*CFrame.Angles(math.rad(-7),math.rad(166),math.rad(3)),tracer=Color3.fromRGB(255,214,90),clip=30,reserve=150,reload=1.35},
  Minigun={range=120,cooldown=.055,kick=.028,asset="Minigun",size=4.05,offset=CFrame.new(.90,-.98,-2.55)*CFrame.Angles(math.rad(-6),math.rad(169),math.rad(2)),tracer=Color3.fromRGB(255,105,75),clip=120,reserve=480,reload=2.0},
- Sword={range=10,cooldown=.45,kick=.11,asset="Knife",size=2.35,offset=CFrame.new(.78,-.86,-1.65)*CFrame.Angles(math.rad(-15),math.rad(174),math.rad(11)),tracer=Color3.fromRGB(160,235,255),clip=1,reserve=0,reload=0},
+ Sword={range=10,cooldown=.45,kick=0,asset="Knife",size=2.35,offset=CFrame.new(.78,-.86,-1.65)*CFrame.Angles(math.rad(-15),math.rad(174),math.rad(11)),tracer=Color3.fromRGB(160,235,255),clip=1,reserve=0,reload=0},
 }
 
 local currentWeapon="Sword"
@@ -187,21 +187,32 @@ end
 local function shoot(t)
  if not t or not los(t) or reloading then return end
  local cfg=Weapons[currentWeapon] or Weapons.Sword
- if currentWeapon~="Sword" and (ammo[currentWeapon] or 0)<=0 then startReload();return end
+
+ -- Knife is true melee only: no tracer, muzzle flash, casing, recoil, or long-range remote attack.
+ if currentWeapon=="Sword" then
+  local char=player.Character
+  local pr=char and char:FindFirstChild("HumanoidRootPart")
+  local er=t:FindFirstChild("HumanoidRootPart")
+  if not pr or not er or (er.Position-pr.Position).Magnitude>cfg.range then return end
+  if os.clock()-lastShot<cfg.cooldown then return end
+  lastShot=os.clock()
+  attackRemote:FireServer(t,"Sword")
+  return
+ end
+
+ if (ammo[currentWeapon] or 0)<=0 then startReload();return end
  if os.clock()-lastShot<cfg.cooldown then return end
  lastShot=os.clock();recoil=cfg.kick
  local aim=point(t);if not aim then return end
  local from=muzzlePosition()
  if currentWeapon=="Shotgun" then
   for _=1,7 do local spread=Vector3.new(rng:NextNumber(-1.8,1.8),rng:NextNumber(-1.3,1.3),rng:NextNumber(-1.8,1.8));tracerFX(from,aim+spread,cfg.tracer,.075,.11) end
- elseif currentWeapon~="Sword" then
+ else
   tracerFX(from,aim,cfg.tracer,currentWeapon=="Minigun" and .065 or .09,currentWeapon=="Minigun" and .075 or .11)
  end
- if currentWeapon~="Sword" then
-  ammo[currentWeapon]=math.max(0,(ammo[currentWeapon] or cfg.clip)-1)
-  publishWeaponState();muzzleFlash(from,cfg);casingFX();impactFX(aim,cfg.tracer)
-  if ammo[currentWeapon]<=0 then startReload() end
- end
+ ammo[currentWeapon]=math.max(0,(ammo[currentWeapon] or cfg.clip)-1)
+ publishWeaponState();muzzleFlash(from,cfg);casingFX();impactFX(aim,cfg.tracer)
+ if ammo[currentWeapon]<=0 then startReload() end
  attackRemote:FireServer(t,currentWeapon)
 end
 
@@ -283,4 +294,4 @@ RunService.RenderStepped:Connect(function(dt)
 end)
 
 player.CharacterAdded:Connect(function() task.wait(.4);clearVM();roamGoal=nil;cachedRoadDir=Vector3.zero;reloading=false;currentWeapon="Sword";publishWeaponState() end)
-print("PLAYER AI V3.4 READY - knife default, gift guns temporary")
+print("PLAYER AI V3.5 READY - knife is melee-only, no shooting behavior")
