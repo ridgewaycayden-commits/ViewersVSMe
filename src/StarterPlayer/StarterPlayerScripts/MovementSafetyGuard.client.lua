@@ -1,6 +1,6 @@
 -- MovementSafetyGuard.client.lua
--- VIEWERS VS ME - MOVEMENT SAFETY GUARD V4
--- Roams around the center grass while absolutely preventing autonomous movement from leaving it.
+-- VIEWERS VS ME - MOVEMENT SAFETY GUARD V5
+-- Authoritative center-grass movement: always moves, roams when idle, never exits the grass bounds.
 
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
@@ -15,10 +15,11 @@ local center=nil
 local grassPart=nil
 local halfX,halfZ=24,24
 local MARGIN=4
-local lastSafe=nil
 local roamTarget=nil
 local nextRoamAt=0
-local idleSince=nil
+local lastSafe=nil
+local lastPos=nil
+local stuckSince=nil
 
 local function groundBelow(pos,char)
 	rayParams.FilterDescendantsInstances={char,workspace:FindFirstChild("TikTokEnemies")}
@@ -43,34 +44,25 @@ local function setZone(char,root)
 	lastSafe=root.Position
 	roamTarget=nil
 	nextRoamAt=0
-	print("CENTER GRASS ROAM ZONE SET",grassPart and grassPart:GetFullName() or "fallback","half",math.floor(halfX),math.floor(halfZ))
+	lastPos=root.Position
+	stuckSince=nil
+	print("CENTER GRASS ACTIVE ZONE",grassPart and grassPart:GetFullName() or "spawn fallback","half",math.floor(halfX),math.floor(halfZ))
 end
 
-local function insideBounds(pos)
+local function insideBounds(pos,padding)
 	if not center then return true end
-	return math.abs(pos.X-center.X)<=halfX and math.abs(pos.Z-center.Z)<=halfZ
+	padding=padding or 0
+	return math.abs(pos.X-center.X)<=math.max(2,halfX-padding) and math.abs(pos.Z-center.Z)<=math.max(2,halfZ-padding)
 end
 
-local function onGrass(pos,char)
-	local hit=groundBelow(pos,char)
-	if not hit or not hit.Instance then return false end
-	if grassPart then return hit.Instance==grassPart end
-	local p=hit.Instance
-	return p.Material==Enum.Material.Grass or string.lower(p.Name or ""):find("grass",1,true)~=nil
-end
-
-local function safePosition(pos,char)
-	return insideBounds(pos) and onGrass(pos,char)
-end
-
-local function chooseRoamTarget(char,root)
-	for _=1,30 do
-		local x=center.X+rng:NextNumber(-halfX*.78,halfX*.78)
-		local z=center.Z+rng:NextNumber(-halfZ*.78,halfZ*.78)
+local function chooseRoamTarget(root)
+	for _=1,40 do
+		local x=center.X+rng:NextNumber(-halfX*.72,halfX*.72)
+		local z=center.Z+rng:NextNumber(-halfZ*.72,halfZ*.72)
 		local p=Vector3.new(x,root.Position.Y,z)
-		if safePosition(p,char) and (Vector3.new(x-root.Position.X,0,z-root.Position.Z)).Magnitude>7 then
+		if insideBounds(p,2) and (Vector3.new(x-root.Position.X,0,z-root.Position.Z)).Magnitude>8 then
 			roamTarget=p
-			nextRoamAt=os.clock()+rng:NextNumber(4,8)
+			nextRoamAt=os.clock()+rng:NextNumber(4.5,8)
 			return
 		end
 	end
@@ -78,10 +70,35 @@ local function chooseRoamTarget(char,root)
 	nextRoamAt=os.clock()+3
 end
 
-local function directionTo(root,target)
+local function dirTo(root,target)
 	if not target then return Vector3.zero end
 	local d=Vector3.new(target.X-root.Position.X,0,target.Z-root.Position.Z)
-	return d.Magnitude>.15 and d.Unit or Vector3.zero
+	return d.Magnitude>.2 and d.Unit or Vector3.zero
+end
+
+local function blocked(root,dir,char)
+	if dir.Magnitude<.05 then return true end
+	rayParams.FilterDescendantsInstances={char,workspace:FindFirstChild("TikTokEnemies")}
+	local origin=root.Position+Vector3.new(0,1.7,0)
+	local right=Vector3.new(-dir.Z,0,dir.X)
+	for _,off in ipairs({0,-1.25,1.25}) do
+		local hit=workspace:Raycast(origin+right*off,dir.Unit*4.5,rayParams)
+		if hit and hit.Instance and hit.Instance.CanCollide and hit.Normal.Y<.55 then return true end
+	end
+	return false
+end
+
+local function pickSafeDirection(root,preferred,char)
+	local base=preferred
+	if base.Magnitude<.05 then base=dirTo(root,roamTarget) end
+	if base.Magnitude<.05 then base=Vector3.new(1,0,0) end
+	base=base.Unit
+	for _,ang in ipairs({0,22,-22,45,-45,70,-70,100,-100,145,-145,180}) do
+		local dir=(CFrame.Angles(0,math.rad(ang),0):VectorToWorldSpace(base)).Unit
+		if insideBounds(root.Position+dir*5,2) and not blocked(root,dir,char) then return dir end
+	end
+	local inward=Vector3.new(center.X-root.Position.X,0,center.Z-root.Position.Z)
+	return inward.Magnitude>.1 and inward.Unit or Vector3.zero
 end
 
 RunService:BindToRenderStep("ViewersVsMeMovementSafety",Enum.RenderPriority.Last.Value,function()
@@ -90,56 +107,64 @@ RunService:BindToRenderStep("ViewersVsMeMovementSafety",Enum.RenderPriority.Last
 	local root=char and char:FindFirstChild("HumanoidRootPart")
 	if not hum or not root or hum.Health<=0 then return end
 	if not center then setZone(char,root) end
-	if player:GetAttribute("AutoMovePaused")==true then idleSince=nil return end
+	if player:GetAttribute("AutoMovePaused")==true then
+		hum:Move(Vector3.zero,false)
+		lastPos=root.Position
+		stuckSince=nil
+		return
+	end
 
-	if safePosition(root.Position,char) then lastSafe=root.Position end
+	if insideBounds(root.Position,0) then lastSafe=root.Position end
 	if not roamTarget or os.clock()>=nextRoamAt or (Vector3.new(roamTarget.X-root.Position.X,0,roamTarget.Z-root.Position.Z)).Magnitude<4 then
-		chooseRoamTarget(char,root)
+		chooseRoamTarget(root)
 	end
 
-	local move=hum.MoveDirection
-	local flat=Vector3.new(move.X,0,move.Z)
-	local override=false
-
-	-- If AutoCombat wants to leave the grass, redirect it across the grass instead of pinning it in place.
-	if flat.Magnitude>.05 then
-		local dir=flat.Unit
-		for _,dist in ipairs({3,6,9}) do
-			if not safePosition(root.Position+dir*dist,char) then
-				override=true
-				break
-			end
-		end
-		idleSince=nil
+	-- Capture whatever AutoCombat wanted this frame. If it is safe, preserve it.
+	local requested=Vector3.new(hum.MoveDirection.X,0,hum.MoveDirection.Z)
+	local desired
+	if requested.Magnitude>.08 and insideBounds(root.Position+requested.Unit*6,2) then
+		desired=requested.Unit
 	else
-		idleSince=idleSince or os.clock()
-		if os.clock()-idleSince>.35 then override=true end
+		desired=dirTo(root,roamTarget)
 	end
 
-	if override then
-		local dir=directionTo(root,roamTarget)
-		if dir.Magnitude<.05 or not safePosition(root.Position+dir*4,char) then
-			chooseRoamTarget(char,root)
-			dir=directionTo(root,roamTarget)
+	-- Near the edge, always bias back inward instead of stopping.
+	if not insideBounds(root.Position+desired*5,2) then
+		desired=Vector3.new(center.X-root.Position.X,0,center.Z-root.Position.Z)
+		if desired.Magnitude>.05 then desired=desired.Unit end
+	end
+
+	desired=pickSafeDirection(root,desired,char)
+
+	-- If we have barely moved for half a second, choose a new target and force a different direction.
+	if lastPos then
+		local moved=(Vector3.new(root.Position.X,0,root.Position.Z)-Vector3.new(lastPos.X,0,lastPos.Z)).Magnitude
+		if moved<.02 then stuckSince=stuckSince or os.clock() else stuckSince=nil end
+		if stuckSince and os.clock()-stuckSince>.5 then
+			chooseRoamTarget(root)
+			desired=pickSafeDirection(root,dirTo(root,roamTarget),char)
+			hum.Jump=true
+			stuckSince=nil
 		end
-		if dir.Magnitude>.05 then hum:Move(dir,false) else hum:Move(Vector3.zero,false) end
 	end
+	lastPos=root.Position
 
-	-- Absolute failsafe: never let the root cross off the grass.
-	if not safePosition(root.Position,char) then
+	-- This is intentionally unconditional: V5 owns the final movement command every frame.
+	hum:Move(desired,false)
+
+	-- Physical failsafe only if something somehow crosses the rectangular grass boundary.
+	if not insideBounds(root.Position,0) then
 		local safe=lastSafe or Vector3.new(center.X,root.Position.Y,center.Z)
 		root.AssemblyLinearVelocity=Vector3.new(0,root.AssemblyLinearVelocity.Y,0)
 		root.CFrame=CFrame.new(safe.X,root.Position.Y,safe.Z)*root.CFrame.Rotation
-		chooseRoamTarget(char,root)
-		local dir=directionTo(root,roamTarget)
-		if dir.Magnitude>.05 then hum:Move(dir,false) end
+		chooseRoamTarget(root)
 	end
 end)
 
 player.CharacterAdded:Connect(function(char)
-	center=nil;grassPart=nil;lastSafe=nil;roamTarget=nil;idleSince=nil
+	center=nil;grassPart=nil;roamTarget=nil;lastSafe=nil;lastPos=nil;stuckSince=nil
 	local root=char:WaitForChild("HumanoidRootPart",5)
 	if root then task.wait(.25);setZone(char,root) end
 end)
 
-print("MOVEMENT SAFETY GUARD V4 READY - free grass roaming + hard boundary")
+print("MOVEMENT SAFETY GUARD V5 READY - authoritative grass roaming")
