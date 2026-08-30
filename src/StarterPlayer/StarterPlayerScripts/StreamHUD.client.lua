@@ -1,6 +1,6 @@
 -- StreamHUD.client.lua
--- VIEWERS VS ME - CINEMATIC FPS HUD V2.4
--- Clean gameplay HUD. F10 stream mode removed.
+-- VIEWERS VS ME - CINEMATIC FPS HUD V2.5
+-- Clean gameplay HUD. Bottom-right live event status overlay removed.
 
 local Players=game:GetService("Players")
 local ReplicatedStorage=game:GetService("ReplicatedStorage")
@@ -37,9 +37,6 @@ local shBack=Instance.new("Frame");shBack.Size=UDim2.fromOffset(300,19);shBack.P
 local shFill=Instance.new("Frame");shFill.Size=UDim2.fromScale(0,1);shFill.BackgroundColor3=Color3.fromRGB(78,155,220);shFill.BorderSizePixel=0;shFill.Parent=shBack;round(shFill,6)
 local shText=text(shBack,"0 / 100",UDim2.fromOffset(0,0),UDim2.fromScale(1,1),Enum.Font.GothamBlack,12,Color3.new(1,1,1),Enum.TextXAlignment.Center)
 
-local status=panel("StatusPanel",UDim2.new(1,-350,1,-82),UDim2.fromOffset(330,62),.18)
-text(status,"HUD READY • WAITING FOR EVENTS",UDim2.fromOffset(14,10),UDim2.new(1,-28,0,18),Enum.Font.GothamBlack,12)
-local status2=text(status,"LIVE EVENT LINK READY",UDim2.fromOffset(14,34),UDim2.new(1,-28,0,18),Enum.Font.GothamBold,11,Color3.fromRGB(190,205,220))
 local banner=text(gui,"",UDim2.new(.5,-300,0,24),UDim2.fromOffset(600,54),Enum.Font.GothamBlack,25,Color3.new(1,1,1),Enum.TextXAlignment.Center);banner.BackgroundColor3=Color3.fromRGB(8,10,15);banner.BackgroundTransparency=1;banner.TextTransparency=1;round(banner,12)
 local kills,active,wave=0,0,1;local bannerToken=0
 local function refreshStats()stats.Text=("KILLS %d  •  ENEMIES %d  •  WAVE %d"):format(kills,active,wave) end
@@ -52,7 +49,7 @@ local function updateWeapon()local logical=tostring(player:GetAttribute("Current
 for _,a in ipairs({"CurrentWeapon","CurrentWeaponAsset","CurrentAmmo","ReserveAmmo","Reloading"}) do player:GetAttributeChangedSignal(a):Connect(updateWeapon) end;updateWeapon()
 
 local remote=ReplicatedStorage:WaitForChild("TikTokStreamEvent",15)
-if remote then status2.Text="LIVE EVENT LINK READY";remote.OnClientEvent:Connect(function(e)if type(e)~="table" then return end;if e.kind=="stats" then kills=e.kills or kills;active=e.active or active;wave=e.wave or wave;refreshStats() end;if e.kind=="gift" then kills=e.kills or kills;active=e.active or active;wave=e.wave or wave;refreshStats();showBanner(("@%s • %s"):format(tostring(e.sender or "VIEWER"),tostring(e.gift or "GIFT"))) elseif e.kind=="banner" then showBanner(tostring(e.title or "VIEWER EVENT")) end end)else status2.Text="EVENT LINK NOT READY" end
+if remote then remote.OnClientEvent:Connect(function(e)if type(e)~="table" then return end;if e.kind=="stats" then kills=e.kills or kills;active=e.active or active;wave=e.wave or wave;refreshStats() end;if e.kind=="gift" then kills=e.kills or kills;active=e.active or active;wave=e.wave or wave;refreshStats();showBanner(("@%s • %s"):format(tostring(e.sender or "VIEWER"),tostring(e.gift or "GIFT"))) elseif e.kind=="banner" then showBanner(tostring(e.title or "VIEWER EVENT")) end end)end
 
 refreshStats()
-print("STREAM HUD V2.4 READY - F10 stream mode removed")
+print("STREAM HUD V2.5 READY - bottom-right live event overlay removed")
