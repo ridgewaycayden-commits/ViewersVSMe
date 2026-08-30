@@ -1,10 +1,9 @@
 -- StreamHUD.client.lua
--- VIEWERS VS ME - CINEMATIC FPS HUD V2.3
--- Clean gameplay HUD with no bottom weapon task bar.
+-- VIEWERS VS ME - CINEMATIC FPS HUD V2.4
+-- Clean gameplay HUD. F10 stream mode removed.
 
 local Players=game:GetService("Players")
 local ReplicatedStorage=game:GetService("ReplicatedStorage")
-local UserInputService=game:GetService("UserInputService")
 local TweenService=game:GetService("TweenService")
 
 local player=Players.LocalPlayer
@@ -41,17 +40,19 @@ local shText=text(shBack,"0 / 100",UDim2.fromOffset(0,0),UDim2.fromScale(1,1),En
 local status=panel("StatusPanel",UDim2.new(1,-350,1,-82),UDim2.fromOffset(330,62),.18)
 text(status,"HUD READY • WAITING FOR EVENTS",UDim2.fromOffset(14,10),UDim2.new(1,-28,0,18),Enum.Font.GothamBlack,12)
 local status2=text(status,"LIVE EVENT LINK READY",UDim2.fromOffset(14,34),UDim2.new(1,-28,0,18),Enum.Font.GothamBold,11,Color3.fromRGB(190,205,220))
-local clean=text(gui,"F10 • CLEAN STREAM",UDim2.new(.5,-90,1,-52),UDim2.fromOffset(180,26),Enum.Font.GothamBold,10,Color3.fromRGB(180,188,202),Enum.TextXAlignment.Center);clean.BackgroundTransparency=.28;clean.BackgroundColor3=Color3.fromRGB(8,10,15);round(clean,9)
 local banner=text(gui,"",UDim2.new(.5,-300,0,24),UDim2.fromOffset(600,54),Enum.Font.GothamBlack,25,Color3.new(1,1,1),Enum.TextXAlignment.Center);banner.BackgroundColor3=Color3.fromRGB(8,10,15);banner.BackgroundTransparency=1;banner.TextTransparency=1;round(banner,12)
-local kills,active,wave=0,0,1;local cleanMode=false;local bannerToken=0
+local kills,active,wave=0,0,1;local bannerToken=0
 local function refreshStats()stats.Text=("KILLS %d  •  ENEMIES %d  •  WAVE %d"):format(kills,active,wave) end
 local function showBanner(t)bannerToken+=1;local token=bannerToken;banner.Text=t;TweenService:Create(banner,TweenInfo.new(.12),{TextTransparency=0,BackgroundTransparency=.18}):Play();task.delay(1.8,function()if token~=bannerToken then return end;TweenService:Create(banner,TweenInfo.new(.24),{TextTransparency=1,BackgroundTransparency=1}):Play()end)end
-local function setClean(on)cleanMode=on;weapon.Visible=not on;vitals.Visible=not on;status.Visible=not on;clean.Visible=not on end
-UserInputService.InputBegan:Connect(function(i,p)if not p and i.KeyCode==Enum.KeyCode.F10 then setClean(not cleanMode)end end)
+
 local function bindHumanoid(char)local hum=char:WaitForChild("Humanoid",5);if not hum then return end;local function update()local max=math.max(1,hum.MaxHealth);local hp=math.clamp(hum.Health,0,max);hpFill.Size=UDim2.fromScale(hp/max,1);hpText.Text=("%d / %d"):format(math.floor(hp+.5),math.floor(max+.5));local shield=char:FindFirstChildOfClass("ForceField") and 100 or 0;shFill.Size=UDim2.fromScale(shield/100,1);shText.Text=("%d / 100"):format(shield)end;hum.HealthChanged:Connect(update);hum:GetPropertyChangedSignal("MaxHealth"):Connect(update);char.ChildAdded:Connect(update);char.ChildRemoved:Connect(update);update()end
 if player.Character then task.spawn(bindHumanoid,player.Character) end;player.CharacterAdded:Connect(bindHumanoid)
+
 local function updateWeapon()local logical=tostring(player:GetAttribute("CurrentWeapon") or "Rifle");local asset=tostring(player:GetAttribute("CurrentWeaponAsset") or logical);local a=tonumber(player:GetAttribute("CurrentAmmo")) or 0;local r=tonumber(player:GetAttribute("ReserveAmmo")) or 0;local reload=player:GetAttribute("Reloading")==true;weaponName.Text=asset:upper();ammoLabel.Text=reload and "RELOADING" or (("%d / %d"):format(a,r));ammoLabel.TextSize=reload and 18 or 29;fireMode.Text=(logical=="Sword") and "MELEE" or "AUTO" end
 for _,a in ipairs({"CurrentWeapon","CurrentWeaponAsset","CurrentAmmo","ReserveAmmo","Reloading"}) do player:GetAttributeChangedSignal(a):Connect(updateWeapon) end;updateWeapon()
+
 local remote=ReplicatedStorage:WaitForChild("TikTokStreamEvent",15)
 if remote then status2.Text="LIVE EVENT LINK READY";remote.OnClientEvent:Connect(function(e)if type(e)~="table" then return end;if e.kind=="stats" then kills=e.kills or kills;active=e.active or active;wave=e.wave or wave;refreshStats() end;if e.kind=="gift" then kills=e.kills or kills;active=e.active or active;wave=e.wave or wave;refreshStats();showBanner(("@%s • %s"):format(tostring(e.sender or "VIEWER"),tostring(e.gift or "GIFT"))) elseif e.kind=="banner" then showBanner(tostring(e.title or "VIEWER EVENT")) end end)else status2.Text="EVENT LINK NOT READY" end
-refreshStats();print("STREAM HUD V2.3 READY - bottom weapon task bar removed")
+
+refreshStats()
+print("STREAM HUD V2.4 READY - F10 stream mode removed")
