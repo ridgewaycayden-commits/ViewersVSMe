@@ -1,5 +1,5 @@
 -- AutoCombat.client.lua
--- VIEWERS VS ME - PLAYER AI V3.2
+-- VIEWERS VS ME - PLAYER AI V3.3
 -- Imported FPS weapons + visible gunfire + ammo/reload + manual pause + road-focused movement.
 
 local Players=game:GetService("Players")
@@ -18,7 +18,7 @@ local rng=Random.new()
 local Weapons={
  Pistol={range=100,cooldown=.30,kick=.075,asset="Handgun",size=2.65,offset=CFrame.new(.76,-.82,-2.05)*CFrame.Angles(math.rad(-5),math.rad(169),math.rad(2)),tracer=Color3.fromRGB(255,214,105),clip=12,reserve=72,reload=1.05},
  SMG={range=95,cooldown=.09,kick=.04,asset="HyperlaserGun",size=3.35,offset=CFrame.new(.77,-.80,-2.12)*CFrame.Angles(math.rad(-4),math.rad(170),math.rad(2)),tracer=Color3.fromRGB(90,220,255),clip=36,reserve=180,reload=1.25},
- Shotgun={range=65,cooldown=.70,kick=.16,asset="RocketLauncher",size=3.8,offset=CFrame.new(.84,-.89,-2.35)*CFrame.Angles(math.rad(-6),math.rad(169),math.rad(2)),tracer=Color3.fromRGB(255,150,75),clip=6,reserve=36,reload=1.65},
+ Shotgun={range=65,cooldown=.70,kick=.16,asset="Handgun",size=2.65,offset=CFrame.new(.76,-.82,-2.05)*CFrame.Angles(math.rad(-5),math.rad(169),math.rad(2)),tracer=Color3.fromRGB(255,150,75),clip=6,reserve=36,reload=1.65},
  Rifle={range=145,cooldown=.16,kick=.075,asset="AK47",size=3.75,offset=CFrame.new(1.18,-1.08,-2.35)*CFrame.Angles(math.rad(-7),math.rad(166),math.rad(3)),tracer=Color3.fromRGB(255,214,90),clip=30,reserve=150,reload=1.35},
  Minigun={range=120,cooldown=.055,kick=.028,asset="Minigun",size=4.05,offset=CFrame.new(.90,-.98,-2.55)*CFrame.Angles(math.rad(-6),math.rad(169),math.rad(2)),tracer=Color3.fromRGB(255,105,75),clip=120,reserve=480,reload=2.0},
  Sword={range=10,cooldown=.45,kick=.11,asset="Knife",size=2.35,offset=CFrame.new(.78,-.86,-1.65)*CFrame.Angles(math.rad(-15),math.rad(174),math.rad(11)),tracer=Color3.fromRGB(160,235,255),clip=1,reserve=0,reload=0},
@@ -283,4 +283,4 @@ RunService.RenderStepped:Connect(function(dt)
 end)
 
 player.CharacterAdded:Connect(function() task.wait(.4);clearVM();roamGoal=nil;cachedRoadDir=Vector3.zero;reloading=false;publishWeaponState() end)
-print("PLAYER AI V3.2 READY - AK proper FPS scale/placement, gift weapons preserved")
+print("PLAYER AI V3.3 READY - Shotgun slot now actually spawns Handgun asset")
