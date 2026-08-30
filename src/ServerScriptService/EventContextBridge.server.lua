@@ -1,6 +1,6 @@
 -- EventContextBridge.server.lua
--- VIEWERS VS ME - EVENT CONTEXT BRIDGE V2
--- One authoritative popup per gift, matched to the effects in GiftEvents.
+-- VIEWERS VS ME - EVENT CONTEXT BRIDGE V2.1
+-- One authoritative popup per gift, matched to the effects in GiftEvents / final weapon bindings.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -47,7 +47,7 @@ local MAP = {
 	["Bunny DJ"]={side="AGAINST",title="BUNNY DJ • TITAN DROP",subtitle="Titan + 12 infected + meteor",color=Color3.fromRGB(255,70,55)},
 
 	-- Legacy gifts still supported by the server.
-	["Heart Me"]={side="HELP",title="HEART ME • HYPERLASER",subtitle="Temporary Hyperlaser activated",color=Color3.fromRGB(80,220,255)},
+	["Heart Me"]={side="HELP",title="HEART ME • AK47",subtitle="AK47 activated for 90s",color=Color3.fromRGB(80,220,255)},
 	["Hand Hearts"]={side="HELP",title="HAND HEARTS • HANDGUN",subtitle="+30 HP and handgun activated",color=Color3.fromRGB(255,155,90)},
 	["Interstellar"]={side="HELP",title="INTERSTELLAR • AK47",subtitle="Zombies frozen + AK47 activated",color=Color3.fromRGB(120,230,255)},
 	["Phoenix"]={side="HELP",title="PHOENIX • AIRSTRIKE",subtitle="Normal infected wiped + 60 HP restored",color=Color3.fromRGB(255,205,80)},
@@ -98,4 +98,4 @@ debug.OnServerEvent:Connect(function(p, giftName)
 	if p == host() then send(giftName, "TEST_VIEWER", 1) end
 end)
 
-print("EVENT CONTEXT BRIDGE V2 READY - paired gift alerts synced")
+print("EVENT CONTEXT BRIDGE V2.1 READY - Heart Me = AK47")
