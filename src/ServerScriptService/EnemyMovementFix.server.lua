@@ -1,6 +1,7 @@
 -- EnemyMovementFix.server.lua
--- VIEWERS VS ME - ENEMY MOVEMENT FIX V1
+-- VIEWERS VS ME - ENEMY MOVEMENT FIX V1.1
 -- Restores visible walking + robust path chase for normal infected and Titans.
+-- Titans are intentionally slower than regular infected.
 -- Works alongside TikTokGameCore V4 fixed safe spawns.
 
 local Players = game:GetService("Players")
@@ -8,6 +9,8 @@ local PathfindingService = game:GetService("PathfindingService")
 
 local enemies = workspace:WaitForChild("TikTokEnemies")
 local WALK_ANIM = "rbxassetid://507777826"
+local NORMAL_SPEED = 9
+local TITAN_SPEED = 6
 
 local states = setmetatable({}, {__mode = "k"})
 
@@ -82,9 +85,15 @@ local function stepEnemy(model)
 	local targetRoot = char and char:FindFirstChild("HumanoidRootPart")
 	if not targetHum or not targetRoot or targetHum.Health <= 0 then return end
 
-	-- Never let a stale freeze leave enemies permanently at zero speed.
+	-- Keep Titans noticeably slower without interfering with a temporary freeze at WalkSpeed 0.
+	if hum.WalkSpeed > 0 then
+		local desiredSpeed = model:GetAttribute("Boss") and TITAN_SPEED or NORMAL_SPEED
+		if hum.WalkSpeed ~= desiredSpeed then hum.WalkSpeed = desiredSpeed end
+	end
+
+	-- Never let a stale zero speed leave enemies permanently frozen.
 	if hum.WalkSpeed <= 0 and not hum:GetAttribute("GiftFrozen") then
-		hum.WalkSpeed = model:GetAttribute("Boss") and 8 or 9
+		hum.WalkSpeed = model:GetAttribute("Boss") and TITAN_SPEED or NORMAL_SPEED
 	end
 
 	local state = states[model]
@@ -157,4 +166,4 @@ task.spawn(function()
 	end
 end)
 
-print("ENEMY MOVEMENT FIX V1 READY - zombies + Titans walking and path chasing")
+print("ENEMY MOVEMENT FIX V1.1 READY - zombies 9 speed, Titans 6 speed")
