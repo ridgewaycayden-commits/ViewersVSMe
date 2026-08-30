@@ -1,7 +1,7 @@
 -- AutoMovePause.client.lua
--- Reliable manual-control toggle for ViewersVSMe.
--- P pauses ONLY autonomous movement; WASD + Space still work.
--- Uses PreSimulation so our manual input overrides AutoCombat's RenderStepped Move() before physics.
+-- HARD manual-control toggle for ViewersVSMe.
+-- P pauses autonomous movement. While paused, AI Humanoid movement is physically blocked,
+-- but WASD + Space still move the player manually.
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -9,6 +9,7 @@ local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
 local paused = false
+local MANUAL_SPEED = 16
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "AutoMoveControls"
@@ -42,9 +43,10 @@ stroke.Transparency = .25
 stroke.Color = Color3.fromRGB(120,135,155)
 stroke.Parent = button
 
-local function getHumanoid()
+local function getParts()
 	local char = player.Character
-	return char and char:FindFirstChildOfClass("Humanoid")
+	if not char then return nil,nil end
+	return char:FindFirstChildOfClass("Humanoid"), char:FindFirstChild("HumanoidRootPart")
 end
 
 local function refresh()
@@ -55,10 +57,14 @@ end
 
 local function toggle()
 	paused = not paused
-	local hum = getHumanoid()
+	local hum,root = getParts()
 	if hum then
-		hum.WalkSpeed = paused and 16 or 15.5
-		hum:Move(Vector3.zero, false)
+		hum:Move(Vector3.zero,false)
+		hum.WalkSpeed = paused and 0 or 15.5
+	end
+	if paused and root then
+		local v = root.AssemblyLinearVelocity
+		root.AssemblyLinearVelocity = Vector3.new(0,v.Y,0)
 	end
 	refresh()
 	print("AUTO MOVE:", paused and "PAUSED / MANUAL" or "RESUMED")
@@ -70,38 +76,57 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	if input.KeyCode == Enum.KeyCode.P then toggle() end
 end)
 
-local function manualMoveVector()
+local function inputVectorWorld()
 	local x,z = 0,0
-	if UserInputService:IsKeyDown(Enum.KeyCode.W) then z -= 1 end
-	if UserInputService:IsKeyDown(Enum.KeyCode.S) then z += 1 end
+	if UserInputService:IsKeyDown(Enum.KeyCode.W) then z += 1 end
+	if UserInputService:IsKeyDown(Enum.KeyCode.S) then z -= 1 end
 	if UserInputService:IsKeyDown(Enum.KeyCode.A) then x -= 1 end
 	if UserInputService:IsKeyDown(Enum.KeyCode.D) then x += 1 end
-	local v = Vector3.new(x,0,z)
-	if v.Magnitude > 1 then v = v.Unit end
-	return v
+
+	local localMove = Vector2.new(x,z)
+	if localMove.Magnitude > 1 then localMove = localMove.Unit end
+	if localMove.Magnitude < .01 then return Vector3.zero end
+
+	local camera = workspace.CurrentCamera
+	local look = camera and camera.CFrame.LookVector or Vector3.new(0,0,-1)
+	local right = camera and camera.CFrame.RightVector or Vector3.new(1,0,0)
+	look = Vector3.new(look.X,0,look.Z)
+	right = Vector3.new(right.X,0,right.Z)
+	if look.Magnitude > .01 then look = look.Unit end
+	if right.Magnitude > .01 then right = right.Unit end
+	return (right * localMove.X + look * localMove.Y).Unit
 end
 
--- IMPORTANT: AutoCombat issues Humanoid:Move() in RenderStepped.
--- PreSimulation runs after rendering input logic but before physics, so this is the
--- final movement command physics receives whenever manual control is enabled.
-RunService.PreSimulation:Connect(function()
+local function enforceManual()
 	if not paused then return end
-	local hum = getHumanoid()
-	if not hum or hum.Health <= 0 then return end
+	local hum,root = getParts()
+	if not hum or not root or hum.Health <= 0 then return end
 
-	hum.WalkSpeed = 16
-	hum:Move(manualMoveVector(), true)
+	-- AutoCombat sets WalkSpeed and calls Humanoid:Move every RenderStepped.
+	-- Force WalkSpeed to zero before physics so those AI Move() calls cannot move us.
+	hum.WalkSpeed = 0
+	hum:Move(Vector3.zero,false)
+
+	-- Then apply our own manual horizontal velocity directly.
+	local manual = inputVectorWorld()
+	local vel = root.AssemblyLinearVelocity
+	root.AssemblyLinearVelocity = Vector3.new(manual.X * MANUAL_SPEED, vel.Y, manual.Z * MANUAL_SPEED)
+
 	if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
 		hum.Jump = true
 	end
-end)
+end
+
+-- Run on BOTH sides of physics so AutoCombat cannot sneak a movement command through.
+RunService.PreSimulation:Connect(enforceManual)
+RunService.PostSimulation:Connect(enforceManual)
 
 player.CharacterAdded:Connect(function()
 	task.wait(.25)
-	local hum = getHumanoid()
-	if hum and paused then hum.WalkSpeed = 16 end
+	local hum = getParts()
+	if hum and paused then hum.WalkSpeed = 0 end
 	refresh()
 end)
 
 refresh()
-print("AUTO MOVE PAUSE V6 READY - PreSimulation manual override")
+print("AUTO MOVE PAUSE V7 READY - hard AI stop + direct manual WASD")
