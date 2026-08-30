@@ -1,8 +1,9 @@
 -- AutoChat.client.lua
--- VIEWERS VS ME - occasional playful trash talk in Roblox chat.
+-- VIEWERS VS ME - reliable occasional playful trash talk in Roblox chat V2.
 
 local Players = game:GetService("Players")
 local TextChatService = game:GetService("TextChatService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local player = Players.LocalPlayer
 local rng = Random.new()
@@ -25,41 +26,70 @@ local lines = {
 	"chat im not losing to that",
 }
 
-local function sendLine(text)
-	local channels = TextChatService:FindFirstChild("TextChannels")
-	local general = channels and (channels:FindFirstChild("RBXGeneral") or channels:FindFirstChildWhichIsA("TextChannel"))
-	if general then
-		pcall(function()
-			general:SendAsync(text)
-		end)
-		return
-	end
+local function getTextChannel()
+	local channels = TextChatService:FindFirstChild("TextChannels") or TextChatService:WaitForChild("TextChannels",10)
+	if not channels then return nil end
 
-	-- Legacy chat fallback if the experience still uses it.
-	local events = game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents")
-	local say = events and events:FindFirstChild("SayMessageRequest")
-	if say then
-		pcall(function()
-			say:FireServer(text, "All")
-		end)
+	local general = channels:FindFirstChild("RBXGeneral")
+	if general and general:IsA("TextChannel") then return general end
+
+	for _,channel in ipairs(channels:GetChildren()) do
+		if channel:IsA("TextChannel") then return channel end
 	end
+	return nil
 end
 
-local function shouldTalk()
-	-- Don't spam while the player is dead/not spawned.
+local function sendLine(message)
+	-- Modern TextChatService path.
+	local channel = getTextChannel()
+	if channel then
+		local ok,err = pcall(function()
+			channel:SendAsync(message)
+		end)
+		if ok then
+			print("AUTO CHAT SENT:",message)
+			return true
+		else
+			warn("AUTO CHAT TextChatService FAILED:",err)
+		end
+	end
+
+	-- Legacy fallback.
+	local events = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
+	local say = events and events:FindFirstChild("SayMessageRequest")
+	if say then
+		local ok,err = pcall(function()
+			say:FireServer(message,"All")
+		end)
+		if ok then
+			print("AUTO CHAT SENT (legacy):",message)
+			return true
+		else
+			warn("AUTO CHAT legacy FAILED:",err)
+		end
+	end
+
+	warn("AUTO CHAT: no usable chat channel found")
+	return false
+end
+
+local function alive()
 	local char = player.Character
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
 	return hum and hum.Health > 0
 end
 
+-- First message comes quickly so it's obvious whether the system works.
 task.spawn(function()
-	task.wait(rng:NextNumber(18, 30))
+	task.wait(7)
+	if alive() then sendLine("chat yall awake or what") end
+
 	while true do
-		if shouldTalk() then
-			sendLine(lines[rng:NextInteger(1, #lines)])
+		task.wait(rng:NextNumber(24,42))
+		if alive() then
+			sendLine(lines[rng:NextInteger(1,#lines)])
 		end
-		task.wait(rng:NextNumber(28, 52))
 	end
 end)
 
-print("AUTO CHAT READY - occasional playful trash talk")
+print("AUTO CHAT V2 READY - first message in ~7 seconds, then every 24-42 seconds")
