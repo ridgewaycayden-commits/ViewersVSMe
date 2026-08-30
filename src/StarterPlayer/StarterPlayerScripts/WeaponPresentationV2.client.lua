@@ -1,5 +1,5 @@
 -- WeaponPresentationV2.client.lua
--- VIEWERS VS ME - imported weapon presentation pass V2.2
+-- VIEWERS VS ME - imported weapon presentation pass V2.3
 -- Normalizes Toolbox models and corrects weird source axes before placing them in FPS view.
 
 local Players = game:GetService("Players")
@@ -26,10 +26,10 @@ local Config = {
 		offset = CFrame.new(1.20,-1.18,-2.55) * CFrame.Angles(math.rad(-5),math.rad(172),math.rad(1)),
 		autoAxis = true,
 	},
+	-- Keep the logical Shotgun slot for combat/gift compatibility, but present it as the clean Handgun asset.
 	Shotgun = {
-		asset = "RocketLauncher", display = "ROCKET LAUNCHER", targetLongest = 3.05,
-		offset = CFrame.new(1.12,-1.12,-2.48) * CFrame.Angles(math.rad(-6),math.rad(174),math.rad(1)),
-		autoAxis = true,
+		asset = "Handgun", display = "HANDGUN", targetLongest = 1.75,
+		offset = CFrame.new(.82,-.82,-1.72) * CFrame.Angles(math.rad(-5),math.rad(170),math.rad(2)),
 	},
 	SMG = {
 		asset = "HyperlaserGun", display = "HYPERLASER", targetLongest = 2.65,
@@ -82,8 +82,6 @@ local function findViewModel()
 end
 
 local function chooseAxisFix(size)
-	-- The gun's longest dimension should run toward/away from the camera (local Z).
-	-- Toolbox assets often arrive with their barrel along X or even Y.
 	if size.X >= size.Y and size.X >= size.Z then
 		return CFrame.Angles(0, math.rad(90), 0)
 	elseif size.Y >= size.X and size.Y >= size.Z then
@@ -93,19 +91,15 @@ local function chooseAxisFix(size)
 end
 
 local function normalize(m,cfg)
-	-- First neutralize placement so GetBoundingBox reflects the model's own source axes.
 	m:PivotTo(CFrame.new(0,10000,0))
 	local ok,_,size = pcall(function() return m:GetBoundingBox() end)
 	if not ok or not size then return end
 	local longest = math.max(size.X,size.Y,size.Z)
 	if longest <= .01 then return end
-
 	local currentScale = 1
 	pcall(function() currentScale = m:GetScale() end)
 	local desiredScale = math.clamp(currentScale * (cfg.targetLongest / longest),.03,8)
 	pcall(function() m:ScaleTo(desiredScale) end)
-
-	-- Re-read after scaling, then build an automatic corrective rotation only for odd assets.
 	local _,scaledSize = m:GetBoundingBox()
 	axisFix = cfg.autoAxis and chooseAxisFix(scaledSize) or CFrame.new()
 	normalizedModel = m
@@ -116,32 +110,20 @@ RunService:BindToRenderStep("ViewersVsMeWeaponPresentation",Enum.RenderPriority.
 	if not camera then return end
 	local cfg = currentConfig()
 	syncDisplayLabel()
-
 	local m = findViewModel()
 	if not m then activeModel=nil;normalizedModel=nil;axisFix=CFrame.new();return end
-	if m ~= activeModel then
-		activeModel=m
-		normalizedModel=nil
-		axisFix=CFrame.new()
-	end
+	if m ~= activeModel then activeModel=m;normalizedModel=nil;axisFix=CFrame.new() end
 	if normalizedModel ~= m then normalize(m,cfg) end
-
 	local char = player.Character
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
 	local moving = hum and hum.MoveDirection.Magnitude > .1
 	bobClock += dt * (moving and 7 or 2)
 	kick *= math.max(0,1-dt*12)
-
 	local moveAmt = moving and 1 or .15
-	local bob = CFrame.new(
-		math.sin(bobClock)*.010*moveAmt,
-		math.abs(math.cos(bobClock*2))*.006*moveAmt,
-		0
-	) * CFrame.Angles(0,0,math.rad(math.sin(bobClock)*.25*moveAmt))
+	local bob = CFrame.new(math.sin(bobClock)*.010*moveAmt,math.abs(math.cos(bobClock*2))*.006*moveAmt,0) * CFrame.Angles(0,0,math.rad(math.sin(bobClock)*.25*moveAmt))
 	local recoil = CFrame.new(0,0,kick*1.25) * CFrame.Angles(math.rad(-kick*40),math.rad(kick*4),0)
-
 	m:PivotTo(camera.CFrame * cfg.offset * axisFix * bob * recoil)
 end)
 
 syncDisplayLabel()
-print("WEAPON PRESENTATION V2.2 READY - automatic Toolbox axis correction + sane FPS poses")
+print("WEAPON PRESENTATION V2.3 READY - shotgun slot now uses Handgun model")
