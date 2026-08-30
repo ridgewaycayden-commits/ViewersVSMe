@@ -1,6 +1,6 @@
 -- TikTokGameCore.server.lua
--- VIEWERS VS ME - ZOMBIE CORE V3.4
--- City Fight ground-level spawns, smooth emergence, path chase, gift/test hordes, occluded viewer tags.
+-- VIEWERS VS ME - ZOMBIE CORE V3.5
+-- City Fight safe street spawns, smooth emergence, path chase, gift/test hordes, occluded viewer tags.
 
 local Players=game:GetService("Players")
 local ReplicatedStorage=game:GetService("ReplicatedStorage")
@@ -36,76 +36,101 @@ local function hostCharacter() local p=hostPlayer();return p and p.Character end
 local function stats() streamRemote:FireAllClients({kind="stats",kills=kills,active=active,wave=math.floor(kills/20)+1}) end
 
 local rayParams=RaycastParams.new();rayParams.FilterType=Enum.RaycastFilterType.Exclude;rayParams.IgnoreWater=true
-local overlapParams=OverlapParams.new();overlapParams.FilterType=Enum.RaycastFilterType.Exclude;overlapParams.MaxParts=50
+local overlapParams=OverlapParams.new();overlapParams.FilterType=Enum.RaycastFilterType.Exclude;overlapParams.MaxParts=75
 
 local function groundAt(raw)
 	rayParams.FilterDescendantsInstances={enemies,hostCharacter()}
 	local hit=workspace:Raycast(raw+Vector3.new(0,70,0),Vector3.new(0,-160,0),rayParams)
-	if not hit or hit.Normal.Y<.72 then return nil end
+	if not hit or hit.Normal.Y<.82 then return nil end
 	return hit.Position,hit.Instance
 end
 
+local bannedWords={
+	"roof","car","truck","vehicle","bus","police","crate","box","container","awning","table","bench","chair","dumpster","trash","prop","sign","fence","wall","window","door","tree","lamp","light","hydrant","barrier","railing","stairs","stair","balcony","porch","deck","scaffold","statue","planter"
+}
+
+local function badSurface(part)
+	if not part or not part:IsA("BasePart") then return true end
+	if not part.CanCollide or part.Transparency>=.98 then return true end
+	local cur=part
+	for _=1,6 do
+		if not cur then break end
+		local n=string.lower(cur.Name or "")
+		for _,word in ipairs(bannedWords) do if n:find(word,1,true) then return true end end
+		cur=cur.Parent
+	end
+	return false
+end
+
 local function openOutdoorSpot(pos,groundPart)
+	if badSurface(groundPart) then return false end
 	overlapParams.FilterDescendantsInstances={enemies,hostCharacter(),groundPart}
-	for _,p in ipairs(workspace:GetPartBoundsInBox(CFrame.new(pos+Vector3.new(0,3.2,0)),Vector3.new(6,6.4,6),overlapParams)) do
+	for _,p in ipairs(workspace:GetPartBoundsInBox(CFrame.new(pos+Vector3.new(0,3.4,0)),Vector3.new(6.5,6.8,6.5),overlapParams)) do
 		if p:IsA("BasePart") and p.CanCollide and p.Transparency<.95 then return false end
 	end
 	rayParams.FilterDescendantsInstances={enemies,hostCharacter(),groundPart}
-	local roof=workspace:Raycast(pos+Vector3.new(0,1.5,0),Vector3.new(0,20,0),rayParams)
+	local roof=workspace:Raycast(pos+Vector3.new(0,1.5,0),Vector3.new(0,28,0),rayParams)
 	return not (roof and roof.Instance and roof.Instance.CanCollide)
 end
 
--- Reject car roofs, crates, awnings and building roofs by checking that the candidate
--- sits near the player's street level and has a broad, flat patch around it.
 local function isStreetLevelSpot(pos,groundPart,origin)
-	if math.abs(pos.Y-origin.Y)>7 then return false end
-	if groundPart and groundPart:IsA("BasePart") then
-		local n=string.lower(groundPart.Name)
-		if n:find("roof") or n:find("car") or n:find("truck") or n:find("crate") or n:find("container") or n:find("awning") or n:find("table") or n:find("bench") then
-			return false
-		end
-	end
+	-- HRP is normally ~3 studs above the street, so this keeps spawns on the same city level.
+	if math.abs(pos.Y-origin.Y)>5.5 then return false end
+	if badSurface(groundPart) then return false end
 
-	local offsets={Vector3.new(3.2,0,0),Vector3.new(-3.2,0,0),Vector3.new(0,0,3.2),Vector3.new(0,0,-3.2)}
+	-- Require a broad flat patch so tiny props, car roofs, curbs and ledges fail.
+	local offsets={
+		Vector3.new(3.5,0,0),Vector3.new(-3.5,0,0),Vector3.new(0,0,3.5),Vector3.new(0,0,-3.5),
+		Vector3.new(2.5,0,2.5),Vector3.new(-2.5,0,2.5),Vector3.new(2.5,0,-2.5),Vector3.new(-2.5,0,-2.5)
+	}
 	for _,off in ipairs(offsets) do
-		local near=select(1,groundAt(pos+off))
-		if not near or math.abs(near.Y-pos.Y)>1.4 then return false end
+		local near,part=groundAt(pos+off)
+		if not near or badSurface(part) or math.abs(near.Y-pos.Y)>1.0 then return false end
 	end
 	return true
 end
 
 local function reachableFromPlayer(pos,origin)
-	local path=PathfindingService:CreatePath({AgentRadius=2.1,AgentHeight=5.2,AgentCanJump=true,WaypointSpacing=5})
-	local ok=pcall(function() path:ComputeAsync(pos+Vector3.new(0,3,0),origin) end)
-	return ok and path.Status==Enum.PathStatus.Success
+	local path=PathfindingService:CreatePath({AgentRadius=2.3,AgentHeight=5.4,AgentCanJump=true,AgentCanClimb=false,WaypointSpacing=5})
+	local ok=pcall(function() path:ComputeAsync(pos+Vector3.new(0,2.5,0),origin) end)
+	return ok and path.Status==Enum.PathStatus.Success and #path:GetWaypoints()>=2
+end
+
+local function validSpawn(raw,origin,requirePath)
+	local ground,groundPart=groundAt(raw)
+	if not ground then return nil end
+	if not openOutdoorSpot(ground,groundPart) then return nil end
+	if not isStreetLevelSpot(ground,groundPart,origin) then return nil end
+	if requirePath and not reachableFromPlayer(ground,origin) then return nil end
+	return ground
 end
 
 local function chooseSpawnPoint()
 	local char=hostCharacter();local root=char and char:FindFirstChild("HumanoidRootPart")
-	local origin=root and root.Position or Vector3.zero
+	if not root then return nil end
+	local origin=root.Position
 
-	-- City Fight: only accept broad, clear, street-level surfaces that can path to the player.
-	for _=1,120 do
+	-- Main ring: far enough to feel natural, but only on verified open street/sidewalk ground.
+	for _=1,180 do
 		local angle=rng:NextNumber(0,math.pi*2)
-		local radius=rng:NextNumber(35,85)
+		local radius=rng:NextNumber(34,78)
 		local raw=origin+Vector3.new(math.cos(angle)*radius,0,math.sin(angle)*radius)
-		local ground,groundPart=groundAt(raw)
-		if ground and openOutdoorSpot(ground,groundPart) and isStreetLevelSpot(ground,groundPart,origin) and reachableFromPlayer(ground,origin) then
-			return ground
-		end
+		local ground=validSpawn(raw,origin,true)
+		if ground then return ground end
 	end
 
-	-- Tighter emergency search if the map is crowded.
-	for _=1,80 do
+	-- Crowded-map fallback remains strict and still requires a valid path.
+	for _=1,140 do
 		local angle=rng:NextNumber(0,math.pi*2)
-		local radius=rng:NextNumber(24,50)
+		local radius=rng:NextNumber(20,44)
 		local raw=origin+Vector3.new(math.cos(angle)*radius,0,math.sin(angle)*radius)
-		local ground,groundPart=groundAt(raw)
-		if ground and openOutdoorSpot(ground,groundPart) and isStreetLevelSpot(ground,groundPart,origin) then return ground end
+		local ground=validSpawn(raw,origin,true)
+		if ground then return ground end
 	end
 
-	local g=select(1,groundAt(origin+Vector3.new(0,0,-30)))
-	return g or origin+Vector3.new(0,0,-30)
+	-- Never force a zombie onto a roof/prop just because no good location was found.
+	warn("ZOMBIE SPAWN SKIPPED - no verified street-level spot found")
+	return nil
 end
 
 local palettes={
@@ -211,18 +236,20 @@ local function spawnZombie(sender,boss,forcedPos)
 	local hum=model:FindFirstChildOfClass("Humanoid");local root=model:FindFirstChild("HumanoidRootPart");if not hum or not root then model:Destroy();return end
 	styleZombie(model,boss);addName(model,tostring(sender),boss);addWalk(hum);hum.MaxHealth=boss and 850 or 100;hum.Health=hum.MaxHealth;hum.WalkSpeed=boss and 8 or 9;hum.JumpPower=36
 	for _,bp in ipairs(model:GetDescendants()) do if bp:IsA("BasePart") then bp.Anchored=false;pcall(function() bp:SetNetworkOwner(nil) end) end end
+	local pos=forcedPos or chooseSpawnPoint()
+	if not pos then model:Destroy();return end
 	active+=1;stats()
 	hum.Died:Connect(function()
 		if model:GetAttribute("Dead") then return end
 		model:SetAttribute("Dead",true);active=math.max(0,active-1);kills+=1;stats();for _,bp in ipairs(model:GetDescendants()) do if bp:IsA("BasePart") then bp.CanCollide=false;bp.CanTouch=false end end;task.delay(1.2,function() if model.Parent then model:Destroy() end end)
 	end)
-	local pos=forcedPos or chooseSpawnPoint();emergeFromGround(model,pos);if model.Parent and hum.Health>0 then hum.WalkSpeed=boss and 8 or 9;startChase(model) end;return model
+	emergeFromGround(model,pos);if model.Parent and hum.Health>0 then hum.WalkSpeed=boss and 8 or 9;startChase(model) end;return model
 end
 
 local function spawnGroup(sender,count,boss)
 	count=math.clamp(tonumber(count) or 1,1,30)
-	if boss then spawnZombie(sender,true,chooseSpawnPoint()) end
-	for i=1,count do task.delay((i-1)*.09,function() spawnZombie(sender..(count>1 and ("_"..i) or ""),false,chooseSpawnPoint()) end) end
+	if boss then spawnZombie(sender,true,nil) end
+	for i=1,count do task.delay((i-1)*.09,function() spawnZombie(sender..(count>1 and ("_"..i) or ""),false,nil) end) end
 end
 
 testRemote.OnServerEvent:Connect(function(player,amount)
@@ -238,4 +265,4 @@ attackRemote.OnServerEvent:Connect(function(player,target,weapon)
 	if not h or not r or not pr or h.Health<=0 or model:GetAttribute("Dead") then return end;if (pr.Position-r.Position).Magnitude>cfg.range+8 then return end;h:TakeDamage(cfg.damage)
 end)
 
-print("ZOMBIE CORE V3.4 READY - City Fight ground-level spawn filtering")
+print("ZOMBIE CORE V3.5 READY - strict City Fight street-only spawning")
