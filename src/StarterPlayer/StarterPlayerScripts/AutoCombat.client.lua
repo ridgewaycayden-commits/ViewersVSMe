@@ -1,5 +1,5 @@
 -- AutoCombat.client.lua
--- VIEWERS VS ME - PLAYER AI V3.3
+-- VIEWERS VS ME - PLAYER AI V3.4
 -- Imported FPS weapons + visible gunfire + ammo/reload + manual pause + road-focused movement.
 
 local Players=game:GetService("Players")
@@ -24,7 +24,7 @@ local Weapons={
  Sword={range=10,cooldown=.45,kick=.11,asset="Knife",size=2.35,offset=CFrame.new(.78,-.86,-1.65)*CFrame.Angles(math.rad(-15),math.rad(174),math.rad(11)),tracer=Color3.fromRGB(160,235,255),clip=1,reserve=0,reload=0},
 }
 
-local currentWeapon="Rifle"
+local currentWeapon="Sword"
 local shownWeapon
 local lastShot=0
 local recoil=0
@@ -48,7 +48,7 @@ local losParams=RaycastParams.new();losParams.FilterType=Enum.RaycastFilterType.
 local moveRayParams=RaycastParams.new();moveRayParams.FilterType=Enum.RaycastFilterType.Exclude;moveRayParams.IgnoreWater=true
 
 local function publishWeaponState()
- local cfg=Weapons[currentWeapon] or Weapons.Rifle
+ local cfg=Weapons[currentWeapon] or Weapons.Sword
  player:SetAttribute("CurrentWeapon",currentWeapon)
  player:SetAttribute("CurrentWeaponAsset",cfg.asset)
  player:SetAttribute("CurrentAmmo",ammo[currentWeapon] or cfg.clip)
@@ -95,7 +95,7 @@ end
 local function giftGun()
  local n=player:GetAttribute("GiftWeapon");local u=player:GetAttribute("GiftWeaponUntil") or 0
  if type(n)=="string" and Weapons[n] and n~="Sword" and u>workspace:GetServerTimeNow() then return n end
- return "Rifle"
+ return "Sword"
 end
 
 local function clearVM()
@@ -111,7 +111,7 @@ end
 
 local function makeWeapon(n)
  clearVM();shownWeapon=n
- local cfg=Weapons[n] or Weapons.Rifle
+ local cfg=Weapons[n] or Weapons.Sword
  local source=weaponAssets and weaponAssets:FindFirstChild(cfg.asset)
  if not source then warn("VIEWERS VS ME: missing weapon asset",cfg.asset,"- using fallback");viewModel,weaponRoot=fallbackWeapon(n);publishWeaponState();return end
  local holder=Instance.new("Model");holder.Name="FPSViewModel_"..cfg.asset;holder.Parent=camera
@@ -170,7 +170,7 @@ end
 
 local function startReload()
  if reloading or currentWeapon=="Sword" then return end
- local cfg=Weapons[currentWeapon] or Weapons.Rifle
+ local cfg=Weapons[currentWeapon] or Weapons.Sword
  if (ammo[currentWeapon] or 0)>=cfg.clip or (reserve[currentWeapon] or 0)<=0 then return end
  reloading=true;publishWeaponState()
  local thisWeapon=currentWeapon
@@ -186,7 +186,7 @@ end
 
 local function shoot(t)
  if not t or not los(t) or reloading then return end
- local cfg=Weapons[currentWeapon] or Weapons.Rifle
+ local cfg=Weapons[currentWeapon] or Weapons.Sword
  if currentWeapon~="Sword" and (ammo[currentWeapon] or 0)<=0 then startReload();return end
  if os.clock()-lastShot<cfg.cooldown then return end
  lastShot=os.clock();recoil=cfg.kick
@@ -274,7 +274,7 @@ RunService.RenderStepped:Connect(function(dt)
  if shownWeapon~=currentWeapon then makeWeapon(currentWeapon) end
  recoil*=math.max(0,1-dt*11);bobClock+=dt*(hum.MoveDirection.Magnitude>.1 and 7 or 2)
  if viewModel and weaponRoot then
-  local cfg=Weapons[currentWeapon] or Weapons.Rifle
+  local cfg=Weapons[currentWeapon] or Weapons.Sword
   local moveAmt=hum.MoveDirection.Magnitude>.1 and 1 or .18
   local bob=CFrame.new(math.sin(bobClock)*.010*moveAmt,math.abs(math.cos(bobClock*2))*.007*moveAmt,0)*CFrame.Angles(math.rad(math.cos(bobClock)*.12*moveAmt),0,math.rad(math.sin(bobClock)*.30*moveAmt))
   local recoilCF=CFrame.new(0,0,recoil*1.9)*CFrame.Angles(math.rad(-recoil*58),math.rad(recoil*8),0)
@@ -282,5 +282,5 @@ RunService.RenderStepped:Connect(function(dt)
  end
 end)
 
-player.CharacterAdded:Connect(function() task.wait(.4);clearVM();roamGoal=nil;cachedRoadDir=Vector3.zero;reloading=false;publishWeaponState() end)
-print("PLAYER AI V3.3 READY - Shotgun slot now actually spawns Handgun asset")
+player.CharacterAdded:Connect(function() task.wait(.4);clearVM();roamGoal=nil;cachedRoadDir=Vector3.zero;reloading=false;currentWeapon="Sword";publishWeaponState() end)
+print("PLAYER AI V3.4 READY - knife default, gift guns temporary")
