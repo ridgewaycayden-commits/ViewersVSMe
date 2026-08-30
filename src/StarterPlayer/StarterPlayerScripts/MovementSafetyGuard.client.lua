@@ -1,6 +1,6 @@
 -- MovementSafetyGuard.client.lua
--- VIEWERS VS ME - MOVEMENT SAFETY GUARD V5
--- Authoritative center-grass movement: always moves, roams when idle, never exits the grass bounds.
+-- VIEWERS VS ME - MOVEMENT SAFETY GUARD V6
+-- Smooth center-grass roaming: no-enemy movement commits to one roam target instead of fighting AutoCombat.
 
 local Players=game:GetService("Players")
 local RunService=game:GetService("RunService")
@@ -21,8 +21,22 @@ local lastSafe=nil
 local lastPos=nil
 local stuckSince=nil
 
+local function enemiesFolder()
+	return workspace:FindFirstChild("TikTokEnemies")
+end
+
+local function hasLiveEnemies()
+	local folder=enemiesFolder()
+	if not folder then return false end
+	for _,m in ipairs(folder:GetChildren()) do
+		local h=m:FindFirstChildOfClass("Humanoid")
+		if h and h.Health>0 then return true end
+	end
+	return false
+end
+
 local function groundBelow(pos,char)
-	rayParams.FilterDescendantsInstances={char,workspace:FindFirstChild("TikTokEnemies")}
+	rayParams.FilterDescendantsInstances={char,enemiesFolder()}
 	return workspace:Raycast(pos+Vector3.new(0,8,0),Vector3.new(0,-20,0),rayParams)
 end
 
@@ -57,28 +71,29 @@ end
 
 local function chooseRoamTarget(root)
 	for _=1,40 do
-		local x=center.X+rng:NextNumber(-halfX*.72,halfX*.72)
-		local z=center.Z+rng:NextNumber(-halfZ*.72,halfZ*.72)
+		local x=center.X+rng:NextNumber(-halfX*.68,halfX*.68)
+		local z=center.Z+rng:NextNumber(-halfZ*.68,halfZ*.68)
 		local p=Vector3.new(x,root.Position.Y,z)
-		if insideBounds(p,2) and (Vector3.new(x-root.Position.X,0,z-root.Position.Z)).Magnitude>8 then
+		if insideBounds(p,3) and (Vector3.new(x-root.Position.X,0,z-root.Position.Z)).Magnitude>10 then
 			roamTarget=p
-			nextRoamAt=os.clock()+rng:NextNumber(4.5,8)
+			-- Commit to the destination. Only change early if reached or genuinely stuck.
+			nextRoamAt=os.clock()+rng:NextNumber(7,11)
 			return
 		end
 	end
 	roamTarget=Vector3.new(center.X,root.Position.Y,center.Z)
-	nextRoamAt=os.clock()+3
+	nextRoamAt=os.clock()+5
 end
 
 local function dirTo(root,target)
 	if not target then return Vector3.zero end
 	local d=Vector3.new(target.X-root.Position.X,0,target.Z-root.Position.Z)
-	return d.Magnitude>.2 and d.Unit or Vector3.zero
+	return d.Magnitude>.35 and d.Unit or Vector3.zero
 end
 
 local function blocked(root,dir,char)
 	if dir.Magnitude<.05 then return true end
-	rayParams.FilterDescendantsInstances={char,workspace:FindFirstChild("TikTokEnemies")}
+	rayParams.FilterDescendantsInstances={char,enemiesFolder()}
 	local origin=root.Position+Vector3.new(0,1.7,0)
 	local right=Vector3.new(-dir.Z,0,dir.X)
 	for _,off in ipairs({0,-1.25,1.25}) do
@@ -93,9 +108,9 @@ local function pickSafeDirection(root,preferred,char)
 	if base.Magnitude<.05 then base=dirTo(root,roamTarget) end
 	if base.Magnitude<.05 then base=Vector3.new(1,0,0) end
 	base=base.Unit
-	for _,ang in ipairs({0,22,-22,45,-45,70,-70,100,-100,145,-145,180}) do
+	for _,ang in ipairs({0,18,-18,38,-38,65,-65,95,-95,135,-135,180}) do
 		local dir=(CFrame.Angles(0,math.rad(ang),0):VectorToWorldSpace(base)).Unit
-		if insideBounds(root.Position+dir*5,2) and not blocked(root,dir,char) then return dir end
+		if insideBounds(root.Position+dir*5,3) and not blocked(root,dir,char) then return dir end
 	end
 	local inward=Vector3.new(center.X-root.Position.X,0,center.Z-root.Position.Z)
 	return inward.Magnitude>.1 and inward.Unit or Vector3.zero
@@ -115,32 +130,37 @@ RunService:BindToRenderStep("ViewersVsMeMovementSafety",Enum.RenderPriority.Last
 	end
 
 	if insideBounds(root.Position,0) then lastSafe=root.Position end
-	if not roamTarget or os.clock()>=nextRoamAt or (Vector3.new(roamTarget.X-root.Position.X,0,roamTarget.Z-root.Position.Z)).Magnitude<4 then
+
+	local noEnemies=not hasLiveEnemies()
+	local distanceToRoam=roamTarget and Vector3.new(roamTarget.X-root.Position.X,0,roamTarget.Z-root.Position.Z).Magnitude or 0
+	if not roamTarget or distanceToRoam<3.5 or os.clock()>=nextRoamAt then
 		chooseRoamTarget(root)
 	end
 
-	-- Capture whatever AutoCombat wanted this frame. If it is safe, preserve it.
-	local requested=Vector3.new(hum.MoveDirection.X,0,hum.MoveDirection.Z)
 	local desired
-	if requested.Magnitude>.08 and insideBounds(root.Position+requested.Unit*6,2) then
-		desired=requested.Unit
-	else
+	if noEnemies then
+		-- Critical jitter fix: ignore AutoCombat's idle left/right commands and commit to one grass target.
 		desired=dirTo(root,roamTarget)
+	else
+		local requested=Vector3.new(hum.MoveDirection.X,0,hum.MoveDirection.Z)
+		if requested.Magnitude>.08 and insideBounds(root.Position+requested.Unit*6,3) then
+			desired=requested.Unit
+		else
+			desired=dirTo(root,roamTarget)
+		end
 	end
 
-	-- Near the edge, always bias back inward instead of stopping.
-	if not insideBounds(root.Position+desired*5,2) then
+	if desired.Magnitude>.05 and not insideBounds(root.Position+desired*5,3) then
 		desired=Vector3.new(center.X-root.Position.X,0,center.Z-root.Position.Z)
 		if desired.Magnitude>.05 then desired=desired.Unit end
 	end
 
 	desired=pickSafeDirection(root,desired,char)
 
-	-- If we have barely moved for half a second, choose a new target and force a different direction.
 	if lastPos then
 		local moved=(Vector3.new(root.Position.X,0,root.Position.Z)-Vector3.new(lastPos.X,0,lastPos.Z)).Magnitude
-		if moved<.02 then stuckSince=stuckSince or os.clock() else stuckSince=nil end
-		if stuckSince and os.clock()-stuckSince>.5 then
+		if moved<.015 then stuckSince=stuckSince or os.clock() else stuckSince=nil end
+		if stuckSince and os.clock()-stuckSince>.75 then
 			chooseRoamTarget(root)
 			desired=pickSafeDirection(root,dirTo(root,roamTarget),char)
 			hum.Jump=true
@@ -149,10 +169,8 @@ RunService:BindToRenderStep("ViewersVsMeMovementSafety",Enum.RenderPriority.Last
 	end
 	lastPos=root.Position
 
-	-- This is intentionally unconditional: V5 owns the final movement command every frame.
 	hum:Move(desired,false)
 
-	-- Physical failsafe only if something somehow crosses the rectangular grass boundary.
 	if not insideBounds(root.Position,0) then
 		local safe=lastSafe or Vector3.new(center.X,root.Position.Y,center.Z)
 		root.AssemblyLinearVelocity=Vector3.new(0,root.AssemblyLinearVelocity.Y,0)
@@ -167,4 +185,4 @@ player.CharacterAdded:Connect(function(char)
 	if root then task.wait(.25);setZone(char,root) end
 end)
 
-print("MOVEMENT SAFETY GUARD V5 READY - authoritative grass roaming")
+print("MOVEMENT SAFETY GUARD V6 READY - smooth idle grass roaming, no-enemy jitter fixed")
